@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>probe</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>CFBundleIdentifier</key>
+	<string>com.brandonlopez.RemindersCompanion.Probe</string>
+	<key>CFBundleName</key>
+	<string>RemindersCompanionProbe</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Reminders Companion needs access to your reminders so it can show them in a weekly planning board.</string>
+</dict>
+</plist>
