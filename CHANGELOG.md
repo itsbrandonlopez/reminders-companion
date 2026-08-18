@@ -6,6 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 
 ## [Unreleased] — Quick add
 
+### Changed
+
+- Task creation on iPhone moved from a toolbar button to a **floating circular + in the
+  bottom right**, overlaid once above the `TabView` rather than repeated per tab — one
+  instance, one position, and it sits outside every `NavigationStack` so scrolling can
+  never clip or scroll it away. Its default day still follows the visible tab.
+- Each scrollable list gained bottom clearance so content can always be scrolled out from
+  under the button, rather than the last row sitting permanently beneath it.
+
 ### Added
 
 - **Quick-add shorthand**, shared by both apps via a new `QuickAddParser` in

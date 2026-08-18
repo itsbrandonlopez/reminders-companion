@@ -11,7 +11,6 @@ struct TodayView: View {
     /// Resolved from `env.pendingTaskID` when a "Next Up" widget deep-links straight to a
     /// specific task rather than just landing on the tab.
     @State private var deepLinkTask: TaskItem?
-    @State private var isAdding = false
 
     var body: some View {
         NavigationStack {
@@ -58,6 +57,7 @@ struct TodayView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .safeAreaPadding(.bottom, 72)   // clears the floating add button
             .navigationTitle("Today")
             .refreshable { await env.store.refresh() }
             .task { resolvePendingDeepLink() }
@@ -65,13 +65,7 @@ struct TodayView: View {
             .sheet(item: $deepLinkTask) { task in
                 TaskSheet(task: task).environment(env)
             }
-            .sheet(isPresented: $isAdding) {
-                QuickAddSheet(defaultDay: .today()).environment(env)
-            }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { isAdding = true } label: { Image(systemName: "plus") }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         // A fresh Simulator has an empty Reminders database, and so does a

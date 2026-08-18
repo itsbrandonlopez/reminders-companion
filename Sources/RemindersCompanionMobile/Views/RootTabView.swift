@@ -17,6 +17,24 @@ struct RootTabView: View {
         }
     }()
 
+    @State private var isAdding = false
+
+    /// What a new task defaults to, following whichever tab you're looking at. An explicit
+    /// date typed into the sheet still overrides this.
+    private var addDefaultDay: Day? {
+        switch selection {
+        case 1:
+            // Adding from a past or future week defaults to that week's first day rather
+            // than today, so the task lands where you were looking.
+            return env.week.contains(.today()) ? .today() : env.week.first
+        case 2:
+            // Triage is the pile for things without a day yet.
+            return nil
+        default:
+            return .today()
+        }
+    }
+
     var body: some View {
         TabView(selection: $selection) {
             TodayView(onShowTriage: { selection = 2 })
@@ -31,6 +49,15 @@ struct RootTabView: View {
                 .tabItem { Label("Triage", systemImage: "tray.full") }
                 .badge(env.pastDueCount)
                 .tag(2)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            FloatingAddButton { isAdding = true }
+                .padding(.trailing, 20)
+                // Clears the floating tab bar rather than sitting on top of it.
+                .padding(.bottom, 96)
+        }
+        .sheet(isPresented: $isAdding) {
+            QuickAddSheet(defaultDay: addDefaultDay).environment(env)
         }
         // A tapped widget sets `requestedTab`; consume it once, so returning to the app
         // later doesn't keep yanking the user back to Today.

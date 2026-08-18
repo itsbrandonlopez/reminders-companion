@@ -15,7 +15,6 @@ struct TriageView: View {
     }
 
     @State private var pile: Pile = .backlog
-    @State private var isAdding = false
 
     private var tasks: [TaskItem] {
         pile == .backlog ? env.backlog : env.unscheduled
@@ -55,19 +54,13 @@ struct TriageView: View {
                         }
                     }
                     .listStyle(.plain)
+                    .safeAreaPadding(.bottom, 72)   // clears the floating add button
                     .refreshable { await env.store.refresh() }
                 }
-            }
-            .sheet(isPresented: $isAdding) {
-                // No date — this is the pile for things you haven't decided a day for.
-                QuickAddSheet(defaultDay: nil).environment(env)
             }
             .navigationTitle("Triage")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { isAdding = true } label: { Image(systemName: "plus") }
-                }
                 if pile == .backlog, !env.backlog.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("All to Today") {
