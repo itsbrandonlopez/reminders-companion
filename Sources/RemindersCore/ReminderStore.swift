@@ -189,12 +189,40 @@ public final class ReminderStore {
     }
 
     private func makeItem(_ reminder: EKReminder, fallbackRank: Double) -> TaskItem? {
+        guard let id = reminder.calendarItemExternalIdentifier else { return nil }
+        let row = meta.ensure(id, title: reminder.title ?? "", defaultRank: fallbackRank)
+        return Self.makeTaskItem(from: reminder, rank: row.rank, estimateMinutes: row.estimateMinutes)
+    }
+
+    /// Completes a reminder by external identifier against a bare `EKEventStore`, with no
+    /// sidecar, no `@MainActor` isolation and no `ReminderStore` instance required.
+    ///
+    /// This is the exact path the widget's tap-to-complete `AppIntent` calls — a widget
+    /// extension is a separate, short-lived process with its own store, not a shared
+    /// instance of the app's `ReminderStore`. Kept as one static function so the app and
+    /// the widget can never drift onto two different completion code paths.
+    @discardableResult
+    public nonisolated static func completeReminder(externalID: String, in store: EKEventStore) throws -> Bool {
+        guard let reminder = store.calendarItems(withExternalIdentifier: externalID)
+            .compactMap({ $0 as? EKReminder }).first else { return false }
+        reminder.isCompleted = true
+        try store.save(reminder, commit: true)
+        return true
+    }
+
+    /// The pure `EKReminder` → `TaskItem` mapping, with no sidecar involved.
+    ///
+    /// Extracted so a widget extension — a separate, memory-constrained process with no
+    /// reason to spin up the SwiftData sidecar for information it never displays (manual
+    /// order, estimates) — can build the identical `TaskItem` shape the app itself uses,
+    /// from a plain `EKEventStore` fetch, by passing a neutral rank and no estimate.
+    public nonisolated static func makeTaskItem(
+        from reminder: EKReminder, rank: Double, estimateMinutes: Int?
+    ) -> TaskItem? {
         guard let id = reminder.calendarItemExternalIdentifier,
               let calendar = reminder.calendar else { return nil }
 
-        let row = meta.ensure(id, title: reminder.title ?? "", defaultRank: fallbackRank)
         let due = reminder.dueDateComponents
-
         return TaskItem(
             id: id,
             title: reminder.title ?? "",
@@ -211,12 +239,12 @@ public final class ReminderStore {
             dueDay: Day(due),
             dueIsTimed: Scheduling.isTimed(due),
             dueDate: due.flatMap { Day.gregorian.date(from: $0) },
-            rank: row.rank,
-            estimateMinutes: row.estimateMinutes
+            rank: rank,
+            estimateMinutes: estimateMinutes
         )
     }
 
-    static func rgba(from cgColor: CGColor?) -> RGBA {
+    nonisolated static func rgba(from cgColor: CGColor?) -> RGBA {
         guard let components = cgColor?.components, components.count >= 3 else { return .neutral }
         return RGBA(
             red: Double(components[0]),

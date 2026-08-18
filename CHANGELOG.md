@@ -4,6 +4,52 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Widgets
+
+### Added
+
+- **Two widget kinds, spanning Home Screen and Lock Screen (and StandBy, which reuses the
+  Lock Screen families for free):**
+  - **Today** — systemSmall/Medium/Large plus accessoryCircular/Rectangular/Inline.
+    Small shows the count with an overdue badge; medium/large show the actual list, with a
+    real tap-to-complete checkbox on each row.
+  - **Next Up** — the single next thing due, for the classic Lock Screen glance. Read-only
+    across every size, including its Home Screen small: a bare checkbox with no other
+    context isn't worth the tap it would save, so the whole widget opens the app to that
+    task instead.
+  - Lock Screen/StandBy widgets are read-only glances that deep-link into the app on tap
+    (a new `reminderscompanion://` URL scheme); interactive completion lives only on the
+    Home Screen `Today` widget's rows, where there's room for it to be a considered choice
+    rather than a cramped one.
+- **Tap-to-complete via `AppIntent`**, completing a reminder with no app launch. Calls
+  `ReminderStore.completeReminder(externalID:in:)`, the same static function a diagnostic
+  verifies end-to-end before trusting it — create a probe task, complete it through the
+  intent's exact code path against a fresh `EKEventStore` (mirroring how an extension
+  process actually runs, not the app's live store), and confirm from a third independent
+  store that it persisted. Verified safe.
+- Widgets reload immediately when backgrounding the app (catching every in-app edit with
+  one hook) and when the completion intent itself fires — not fully live, since WidgetKit
+  budgets background refreshes, but responsive to the moments that matter.
+
+### Changed
+
+- `WidgetDataProvider` (the widget's read path) and `WidgetKind` (shared kind
+  identifiers) moved into `RemindersCore`, since neither has any WidgetKit dependency and
+  both the extension and the app's own diagnostic need the identical logic — one source of
+  truth rather than a widget-only copy nothing else could verify against.
+- Extracted `ReminderStore.makeTaskItem`, the pure `EKReminder` → `TaskItem` mapping, out
+  of the sidecar-aware fetch path so the widget (a separate, memory-constrained process
+  with no reason to spin up SwiftData for information it never shows) can build the exact
+  same shape from a bare `EKEventStore` fetch.
+
+### Verified, not yet seen
+
+- The completion intent's logic and the widget's data-fetch logic are proven against live
+  EventKit data via a diagnostic launch hook, the same rigor as the recurring-completion
+  check. **Actually placing a widget on a Home Screen or Lock Screen and tapping it is not
+  something this session's tooling can automate** — that verification needs a person, the
+  same way drag-to-reschedule ultimately did.
+
 ## [Unreleased] — iPhone companion
 
 ### Added

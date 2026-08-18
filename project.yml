@@ -37,6 +37,8 @@ targets:
     dependencies:
       - package: RemindersCore
         product: RemindersCore
+      - target: RemindersCompanionWidgets
+        embed: true
     info:
       path: Sources/RemindersCompanionMobile/Info.plist
       properties:
@@ -44,6 +46,9 @@ targets:
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
         UILaunchScreen: {}
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - reminderscompanion
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
@@ -75,3 +80,45 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+
+  RemindersCompanionWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/RemindersCompanionWidgets
+    dependencies:
+      - package: RemindersCore
+        product: RemindersCore
+    info:
+      path: Sources/RemindersCompanionWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Companion Widgets
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        # Duplicated from the main app's Info.plist. Whether TCC resolves an extension's
+        # Reminders/Calendar prompt through the containing app or checks the extension's
+        # own bundle varies by iOS version, so both carry the real strings rather than
+        # leaving the widget's blank and hoping.
+        NSRemindersFullAccessUsageDescription: >-
+          Reminders Companion shows the reminders you already have in a weekly planning
+          view. Your tasks stay in Reminders and your existing notifications are never
+          changed.
+        NSCalendarsFullAccessUsageDescription: >-
+          Reminders Companion can overlay your calendar so you can see which days are
+          already booked. Events are only ever read, never changed.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.brandonlopez.RemindersCompanionMobile.Widgets
+        # Apple requires an extension's marketing version to match its containing app's.
+        # bump-build.sh's build-number substitution matches this line too, since it
+        # patches every CURRENT_PROJECT_VERSION occurrence in the file.
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        SWIFT_STRICT_CONCURRENCY: complete
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: NO

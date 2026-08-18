@@ -8,6 +8,9 @@ struct TodayView: View {
     @Environment(MobileEnvironment.self) private var env
 
     private var tasks: [TaskItem] { env.todaysTasks }
+    /// Resolved from `env.pendingTaskID` when a "Next Up" widget deep-links straight to a
+    /// specific task rather than just landing on the tab.
+    @State private var deepLinkTask: TaskItem?
 
     var body: some View {
         NavigationStack {
@@ -56,6 +59,11 @@ struct TodayView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("Today")
             .refreshable { await env.store.refresh() }
+            .task { resolvePendingDeepLink() }
+            .onChange(of: env.pendingTaskID) { _, _ in resolvePendingDeepLink() }
+            .sheet(item: $deepLinkTask) { task in
+                TaskSheet(task: task).environment(env)
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -79,5 +87,14 @@ struct TodayView: View {
                 }
             }
         }
+    }
+
+    /// Consumes `env.pendingTaskID` once. If the task isn't loaded yet (a cold launch
+    /// racing the first refresh), it is simply not found and the deep link falls back to
+    /// having landed on Today, which `RootTabView` already handled.
+    private func resolvePendingDeepLink() {
+        guard let id = env.pendingTaskID else { return }
+        env.pendingTaskID = nil
+        deepLinkTask = env.store.tasks.first { $0.id == id }
     }
 }

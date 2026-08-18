@@ -27,6 +27,21 @@ final class MobileEnvironment {
 
     var weekAnchor: Day = .today()
 
+    /// Set by a tapped widget's deep link. `RootTabView` observes this to switch tabs;
+    /// `TodayView` observes it to present that task's detail sheet once found. Cleared by
+    /// whichever view consumes it, so a stale link never re-fires.
+    var requestedTab: Int?
+    var pendingTaskID: String?
+
+    func handleDeepLink(_ url: URL) {
+        guard url.scheme == "reminderscompanion" else { return }
+        requestedTab = 0   // Today
+        if url.host == "task" {
+            let id = url.pathComponents.dropFirst().first
+            pendingTaskID = id
+        }
+    }
+
     private let defaults = UserDefaults.standard
     private static let listsKey = "mobile.selectedListIDs"
     private static let overlayKey = "mobile.overlayCalendarIDs"

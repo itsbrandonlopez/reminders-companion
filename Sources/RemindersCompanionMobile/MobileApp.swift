@@ -1,5 +1,6 @@
 import RemindersCore
 import SwiftUI
+import WidgetKit
 
 @main
 struct RemindersCompanionMobileApp: App {
@@ -46,12 +47,37 @@ struct RootView: View {
                 if !env.store.hasSampleData { await env.store.installSampleData() }
                 env.completeSetup()
             }
+
+            // Verifies the two things the widget extension does that the rest of the app
+            // never exercises: fetching through WidgetDataProvider's bare-EKEventStore
+            // path (no ReminderStore, no MetaStore — a separate process has neither), and
+            // completing a reminder through the exact static function
+            // CompleteTaskIntent.perform() calls, run against its own fresh store the same
+            // way an extension process would, not the app's live one.
+            if CommandLine.arguments.contains("--test-widget"), env.store.access == .granted {
+                let report = await WidgetDiagnostic.run(env: env)
+                let url = URL.documentsDirectory.appendingPathComponent("widget-diagnostic.txt")
+                try? report.write(to: url, atomically: true, encoding: .utf8)
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             // Coming back from Reminders or another device's edit should not need a pull
             // to refresh — this is a companion, it should already be right.
-            guard phase == .active, env.store.access == .granted else { return }
-            Task { await env.store.refresh() }
+            if phase == .active, env.store.access == .granted {
+                Task { await env.store.refresh() }
+            }
+            // Reloading on the way to the background — rather than after every individual
+            // edit — catches every in-app change (schedule, complete, create, delete) with
+            // one hook instead of threading a reload call through each view that mutates.
+            // It also lands at the moment that matters: nobody is looking at a widget
+            // while the app is the thing on screen.
+            if phase == .background {
+                WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.today)
+                WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.nextUp)
+            }
+        }
+        .onOpenURL { url in
+            env.handleDeepLink(url)
         }
     }
 }

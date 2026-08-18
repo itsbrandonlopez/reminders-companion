@@ -32,5 +32,12 @@ struct RootTabView: View {
                 .badge(env.pastDueCount)
                 .tag(2)
         }
+        // A tapped widget sets `requestedTab`; consume it once, so returning to the app
+        // later doesn't keep yanking the user back to Today.
+        .onChange(of: env.requestedTab) { _, requested in
+            guard let requested else { return }
+            selection = requested
+            env.requestedTab = nil
+        }
     }
 }
