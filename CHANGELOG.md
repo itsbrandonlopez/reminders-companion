@@ -4,6 +4,14 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] — 2026-08-18
+
+### Changed
+
+- Clicking anywhere on a task opens its details, the way a row does in Reminders. The
+  hover ellipsis is gone. Dragging still works — a click opens, a drag moves — and the
+  checkbox consumes its own clicks, so ticking a task never opens the panel.
+
 ## [1.2.0] — 2026-08-18
 
 ### Added
@@ -120,6 +128,7 @@ source of truth.
 - macOS only. The domain logic is UI-free and platform-agnostic, so an iPhone app and
   widget can be added without rework.
 
+[1.2.1]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.2.1
 [1.2.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.2.0
 [1.1.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.1.0
 [1.0.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.0.0

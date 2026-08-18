@@ -131,12 +131,16 @@ struct TaskCardView: View {
                     .offset(y: -4)
             }
         }
-        .overlay(alignment: .topTrailing) { detailButton }
         .overlay(alignment: .trailing) { spanHandle }
         .popover(isPresented: $showsDetail, arrowEdge: .trailing) {
             TaskDetailView(task: task).environment(env)
         }
         .opacity(isContinuation ? 0.5 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !isContinuation else { return }
+            showsDetail = true
+        }
         .onHover { isHovering = $0 }
         .contextMenu { menu }
         .dropDestination(for: String.self) { items, _ in
@@ -146,20 +150,6 @@ struct TaskCardView: View {
             guard let onDropAbove, id != task.id else { return false }
             return onDropAbove(id)
         } isTargeted: { isReorderTarget = $0 && onDropAbove != nil }
-    }
-
-    @ViewBuilder private var detailButton: some View {
-        if isHovering, !isContinuation {
-            Button { showsDetail = true } label: {
-                Image(systemName: "ellipsis.circle.fill")
-                    .font(.system(size: 12))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(Palette.textSecondary, Palette.card)
-            }
-            .buttonStyle(.plain)
-            .padding(5)
-            .help("Show details")
-        }
     }
 
     @ViewBuilder private var spanHandle: some View {
