@@ -257,3 +257,75 @@ final class DeadlineComponentsTests: XCTestCase {
         XCTAssertEqual(span?.upperBound, Day(year: 2026, month: 8, day: 24))
     }
 }
+
+/// iOS refuses to save a reminder that has a due date but no start date
+/// (`EKErrorNoStartDate`); macOS has no such requirement. These cover the pure logic that
+/// decides when to intervene and what to write, so the rule is verifiable on either
+/// platform even though it only *applies* on iOS.
+final class IOSStartDateRequirementTests: XCTestCase {
+
+    private func components(day: Int, hour: Int? = nil) -> DateComponents {
+        var c = DateComponents()
+        c.calendar = Day.gregorian
+        c.year = 2026; c.month = 8; c.day = day
+        if let hour {
+            c.timeZone = TimeZone(identifier: "America/New_York")
+            c.hour = hour; c.minute = 0; c.second = 0
+        }
+        return c
+    }
+
+    func testDueWithoutStartNeedsIntervention() {
+        XCTAssertTrue(Scheduling.needsStartDateForDueDate(due: components(day: 20), start: nil))
+    }
+
+    func testDueWithStartIsAlreadyFine() {
+        XCTAssertFalse(
+            Scheduling.needsStartDateForDueDate(due: components(day: 20), start: components(day: 18))
+        )
+    }
+
+    func testNoDueDateNeedsNothing() {
+        XCTAssertFalse(Scheduling.needsStartDateForDueDate(due: nil, start: nil))
+        XCTAssertFalse(Scheduling.needsStartDateForDueDate(due: nil, start: components(day: 18)))
+    }
+
+    func testGeneratedStartIsTheDueDayItselfNotToday() {
+        // The whole point: planned day must equal the deadline so the task does not move
+        // to a different column on iPhone than it occupies on the Mac.
+        let start = Scheduling.startDateSatisfyingDueDate(components(day: 20))
+        XCTAssertEqual(Day(start), Day(year: 2026, month: 8, day: 20))
+    }
+
+    func testGeneratedStartLeavesBoardPositionAndSpanUnchanged() {
+        let due = components(day: 20)
+        let start = Scheduling.startDateSatisfyingDueDate(due)
+
+        // Same column as it occupied with no start date at all.
+        XCTAssertEqual(
+            Scheduling.boardDay(start: start, due: due),
+            Scheduling.boardDay(start: nil, due: due)
+        )
+        // And it must not start rendering as a multi-day bar.
+        let span = Scheduling.span(start: start, due: due)
+        XCTAssertEqual(span?.lowerBound, span?.upperBound)
+    }
+
+    func testGeneratedStartMirrorsATimedDeadline() {
+        // A timed due date must produce a timed start, or the all-day coercion rule
+        // flattens the deadline's time — the trap from the original spike.
+        let start = Scheduling.startDateSatisfyingDueDate(components(day: 20, hour: 9))
+        XCTAssertEqual(start?.hour, 0)
+        XCTAssertEqual(start?.timeZone?.identifier, "America/New_York")
+    }
+
+    func testGeneratedStartForAnAllDayDeadlineStaysFloating() {
+        let start = Scheduling.startDateSatisfyingDueDate(components(day: 20))
+        XCTAssertNil(start?.hour)
+        XCTAssertNil(start?.timeZone)
+    }
+
+    func testNoDueDateProducesNoStart() {
+        XCTAssertNil(Scheduling.startDateSatisfyingDueDate(nil))
+    }
+}

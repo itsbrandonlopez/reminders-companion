@@ -67,6 +67,28 @@ public enum Scheduling {
         return c
     }
 
+    /// Whether a reminder in this state would be rejected when saved on iOS.
+    ///
+    /// The `EKReminder` header states that on iOS a due date requires a start date, or the
+    /// save fails with `EKErrorNoStartDate` — explicitly not a requirement on macOS. Every
+    /// path that writes a due date has to account for it.
+    public static func needsStartDateForDueDate(
+        due: DateComponents?, start: DateComponents?
+    ) -> Bool {
+        due != nil && start == nil
+    }
+
+    /// The start components to add so a due date can be saved on iOS.
+    ///
+    /// Deliberately the **due day itself**, not today: planned day then equals the
+    /// deadline, so `boardDay` is unchanged and `spansMultipleDays` stays false. The task
+    /// therefore renders identically on iPhone and Mac instead of sprouting a phantom
+    /// planned day that would move it to a different column.
+    public static func startDateSatisfyingDueDate(_ due: DateComponents?) -> DateComponents? {
+        guard let due, let day = Day(due) else { return nil }
+        return plannedComponents(for: day, alongside: due)
+    }
+
     /// The day a task should appear under on the week board.
     ///
     /// Planned day wins when present — that is the whole point of the start/due split.

@@ -5,6 +5,9 @@ import Observation
 #if canImport(AppKit)
 import AppKit
 #endif
+#if canImport(UIKit)
+import UIKit
+#endif
 
 public enum AccessState: Equatable, Sendable {
     case unknown
@@ -84,12 +87,18 @@ public final class ReminderStore {
         }
     }
 
-    #if canImport(AppKit)
+    /// Sends the user to the one place a declined permission can be restored.
     public func openPrivacySettings() {
+        #if canImport(AppKit)
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders")!
         NSWorkspace.shared.open(url)
+        #elseif canImport(UIKit)
+        // iOS has no per-service deep link; this opens the app's own settings page.
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
+        #endif
     }
-    #endif
 
     // MARK: - Change observation
 
@@ -219,6 +228,21 @@ public final class ReminderStore {
 
     // MARK: - Writing
 
+    /// Adds a start date when iOS would otherwise refuse to save a due date.
+    ///
+    /// A no-op on macOS, which has no such requirement — guarding it keeps the Mac app's
+    /// behaviour byte-for-byte unchanged rather than quietly giving every deadline a
+    /// planned day.
+    func satisfyStartDateRequirement(on reminder: EKReminder) {
+        #if os(iOS)
+        guard Scheduling.needsStartDateForDueDate(
+            due: reminder.dueDateComponents, start: reminder.startDateComponents
+        ) else { return }
+        reminder.startDateComponents =
+            Scheduling.startDateSatisfyingDueDate(reminder.dueDateComponents)
+        #endif
+    }
+
     /// Resolves a live reminder for one of our value types.
     ///
     /// Looks up by external identifier rather than item identifier because the latter is
@@ -276,6 +300,7 @@ public final class ReminderStore {
             reminder.dueDateComponents = Scheduling.deadlineComponents(
                 for: deadlineDay, preserving: reminder.dueDateComponents
             )
+            satisfyStartDateRequirement(on: reminder)
         }
     }
 
@@ -407,6 +432,7 @@ public final class ReminderStore {
                 for: day, alongside: reminder.dueDateComponents
             )
         }
+        satisfyStartDateRequirement(on: reminder)
         do {
             markLocalWrite()
             try store.save(reminder, commit: true)

@@ -4,6 +4,41 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — iPhone companion
+
+### Added
+
+- **`RemindersCompanionMobile`**, an iPhone companion app sharing `RemindersCore` with the
+  Mac. Three tabs: Today, Week, and Triage.
+  - **Week** is a single vertical column of days with tasks flat beneath each — not
+    subdivided by list, which costs more in scrolling than it returns on a phone.
+  - An always-visible **7-day strip** pins to the top of the Week view. It doubles as a
+    jump control and as drop targets, so a long-press drag can reach any day without
+    scrolling mid-gesture.
+  - **Triage** holds the two piles that would clog the day and week views — past due and
+    no-date — behind a segmented control, with a tab badge when the backlog is not empty.
+  - Swipe to complete; swipe for Today/Tomorrow in Triage, where a drag cannot cross tabs.
+  - Task sheet with notes, dates, priority and list. Alarms and recurrence read-only, as
+    on the Mac.
+  - Two-step setup: access, then list picking.
+- `project.yml` for XcodeGen, so the iOS project is generated from a reviewable spec
+  rather than a checked-in `.pbxproj`.
+
+### Fixed
+
+- **`EKErrorNoStartDate` on iOS.** The SDK requires a start date whenever a due date is
+  set — explicitly not a macOS requirement — and three paths wrote due dates without one
+  (`setDueDay`, `create`, and the sample bill). They would all have failed to save on
+  iPhone. The generated start is the **due day itself**, so `boardDay` and
+  `spansMultipleDays` are unchanged and a task renders identically on both platforms.
+- `openPrivacySettings` now has a UIKit branch.
+
+### Notes
+
+- The iPhone app deliberately has no folders, manual ordering or estimates. Those live in
+  a local sidecar that does not sync, and the phone is a companion rather than the place
+  you organise from.
+
 ## [1.2.1] — 2026-08-18
 
 ### Changed

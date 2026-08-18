@@ -112,6 +112,7 @@ extension ReminderStore {
                 }
             }
 
+            satisfyStartDateRequirement(on: reminder)
             try? store.save(reminder, commit: false)
         }
 

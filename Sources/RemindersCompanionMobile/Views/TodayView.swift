@@ -1,0 +1,61 @@
+import RemindersCore
+import SwiftUI
+
+/// Today's dated work, flat. Overdue items are held back in Triage and surfaced here only
+/// as a banner — mixing them in is what makes a "today" list stop meaning today.
+struct TodayView: View {
+    let onShowTriage: () -> Void
+    @Environment(MobileEnvironment.self) private var env
+
+    private var tasks: [TaskItem] { env.todaysTasks }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if env.pastDueCount > 0 {
+                    Section {
+                        Button(action: onShowTriage) {
+                            HStack(spacing: 9) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                Text("\(env.pastDueCount) past due")
+                                    .font(.system(size: 14, weight: .medium))
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                            }
+                            .foregroundStyle(Palette.overdue)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if let summary = env.overlaySummary(on: .today()) {
+                    Section {
+                        Label(summary, systemImage: "calendar")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Palette.textSecondary)
+                    }
+                }
+
+                Section {
+                    if tasks.isEmpty {
+                        ContentUnavailableView(
+                            "Nothing planned for today",
+                            systemImage: "checkmark.circle",
+                            description: Text("Pull something in from Week or Triage.")
+                        )
+                    } else {
+                        ForEach(tasks) { task in
+                            TaskRow(task: task)
+                                .listRowInsets(EdgeInsets())
+                        }
+                    }
+                } header: {
+                    Text(Day.today().monthDayLabel)
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("Today")
+            .refreshable { await env.store.refresh() }
+        }
+    }
+}
