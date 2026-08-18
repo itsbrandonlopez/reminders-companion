@@ -57,30 +57,16 @@ struct WeekView: View {
 
     private var list: some View {
         ScrollViewReader { proxy in
-            List {
-                ForEach(env.week, id: \.self) { day in
-                    Section {
-                        let tasks = env.tasks(on: day)
-                        if tasks.isEmpty {
-                            Text("Nothing planned")
-                                .font(.system(size: 13))
-                                .foregroundStyle(Palette.textTertiary)
-                        } else {
-                            ForEach(tasks) { task in
-                                TaskRow(task: task).listRowInsets(EdgeInsets())
-                            }
-                        }
-                    } header: {
-                        DaySectionHeader(day: day, summary: env.overlaySummary(on: day))
-                    }
-                    .id(day)
-                    // Dropping onto the section schedules to that day.
-                    .dropDestination(for: String.self) { ids, _ in
-                        schedule(ids, to: day)
+            ScrollView {
+                LazyVStack(spacing: 14, pinnedViews: []) {
+                    ForEach(env.week, id: \.self) { day in
+                        DayBlock(day: day)
+                            .id(day)
                     }
                 }
+                .padding(.vertical, 12)
             }
-            .listStyle(.insetGrouped)
+            .background(Palette.background)
             .refreshable { await env.store.refresh() }
             .onAppear {
                 // Open on today rather than Monday — the week is for planning around now.
@@ -90,12 +76,56 @@ struct WeekView: View {
             }
         }
     }
+}
 
-    private func schedule(_ ids: [String], to day: Day) -> Bool {
-        guard let id = ids.first,
-              let task = env.store.tasks.first(where: { $0.id == id }) else { return false }
-        Task { await env.store.schedule(task, to: day) }
-        return true
+/// One day, and the drop target for it.
+///
+/// The whole block accepts a drop — header, rows and the empty space beneath — so aiming
+/// at a day is forgiving. A `List` `Section` cannot do this, which is why the week is a
+/// `ScrollView` rather than a `List`.
+private struct DayBlock: View {
+    let day: Day
+    @Environment(MobileEnvironment.self) private var env
+    @State private var isTargeted = false
+
+    private var tasks: [TaskItem] { env.tasks(on: day) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            DaySectionHeader(day: day, summary: env.overlaySummary(on: day))
+                .padding(.horizontal, 16)
+
+            VStack(spacing: 0) {
+                if tasks.isEmpty {
+                    Text("Nothing planned")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Palette.textTertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 16)
+                } else {
+                    ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
+                        TaskRow(task: task, isDraggable: true)
+                        if index < tasks.count - 1 {
+                            Divider().padding(.leading, 46)
+                        }
+                    }
+                }
+            }
+            .background(Palette.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isTargeted ? Palette.accent : .clear, lineWidth: 2)
+            )
+            .padding(.horizontal, 12)
+        }
+        .dropDestination(for: String.self) { ids, _ in
+            guard let id = ids.first,
+                  let task = env.store.tasks.first(where: { $0.id == id }) else { return false }
+            Task { await env.store.schedule(task, to: day) }
+            return true
+        } isTargeted: { isTargeted = $0 }
     }
 }
 

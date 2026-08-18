@@ -35,6 +35,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 
 ### Fixed
 
+- **Drag-to-reschedule did not work on iPhone.** Two real defects, not just remote-session
+  latency:
+  - `.dropDestination` was attached to a `List` `Section`, which cannot host one — most of
+    the week had no valid drop area at all. The week is now a `ScrollView` of day blocks,
+    each a genuine drop target covering its header, rows and empty space.
+  - `.swipeActions` and `.draggable` were on the same row. Both want a press-and-move and
+    inside a `List` the swipe always wins. A row now does one or the other: the week
+    drags, Today and Triage swipe.
+- Dragging shows a compact capsule preview rather than the full row, which is far too tall
+  to aim with.
+- Added tap-only rescheduling (Today / Tomorrow / +1 Week) to the task sheet, since drag is
+  unusable over a remote session or one-handed.
+
 - **`EKErrorNoStartDate` on iOS.** The SDK requires a start date whenever a due date is
   set — explicitly not a macOS requirement — and three paths wrote due dates without one
   (`setDueDay`, `create`, and the sample bill). They would all have failed to save on

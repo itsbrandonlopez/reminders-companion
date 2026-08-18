@@ -7,6 +7,10 @@ struct TaskRow: View {
     let task: TaskItem
     /// Quick-schedule actions vary by context; Triage needs them, the week does not.
     var showsScheduleActions = false
+    /// Drag and swipe both want a press-and-move, and inside a List the swipe always
+    /// wins. So a row does one or the other, never both: the week drags, everywhere else
+    /// swipes.
+    var isDraggable = false
 
     @Environment(MobileEnvironment.self) private var env
     @State private var showsSheet = false
@@ -77,31 +81,8 @@ struct TaskRow: View {
         .sheet(isPresented: $showsSheet) {
             TaskSheet(task: task).environment(env)
         }
-        // Long-press to drag: the gesture the week view is built around.
-        .draggable(task.id)
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            Button {
-                Task { await env.store.setCompleted(task, true) }
-            } label: { Label("Done", systemImage: "checkmark") }
-                .tint(.green)
-        }
-        .swipeActions(edge: .trailing) {
-            if showsScheduleActions {
-                Button {
-                    Task { await env.store.schedule(task, to: .today()) }
-                } label: { Label("Today", systemImage: "sun.max") }
-                    .tint(Palette.accent)
-                Button {
-                    Task { await env.store.schedule(task, to: Day.today().adding(days: 1)) }
-                } label: { Label("Tomorrow", systemImage: "arrow.right") }
-                    .tint(Palette.flag)
-            } else {
-                Button {
-                    Task { await env.store.schedule(task, to: nil) }
-                } label: { Label("Unschedule", systemImage: "tray") }
-                    .tint(Palette.textSecondary)
-            }
-        }
+        .modifier(RowGestures(task: task, isDraggable: isDraggable,
+                              showsScheduleActions: showsScheduleActions))
     }
 
     private var priorityGlyph: String {
@@ -114,6 +95,55 @@ struct TaskRow: View {
         switch task.priority {
         case .high: Palette.overdue; case .medium: Palette.flag
         case .low: Palette.textSecondary; case .none: Palette.textTertiary
+        }
+    }
+}
+
+
+/// Applies exactly one of the two competing gesture sets.
+private struct RowGestures: ViewModifier {
+    let task: TaskItem
+    let isDraggable: Bool
+    let showsScheduleActions: Bool
+    @Environment(MobileEnvironment.self) private var env
+
+    func body(content: Content) -> some View {
+        if isDraggable {
+            // Long-press to drag. No swipe actions here — they would consume the gesture
+            // before the drag ever starts.
+            content.draggable(task.id) {
+                // A compact drag preview: the full row is far too tall to aim with.
+                Text(task.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Palette.surfaceRaised, in: Capsule())
+            }
+        } else {
+            content
+                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    Button {
+                        Task { await env.store.setCompleted(task, true) }
+                    } label: { Label("Done", systemImage: "checkmark") }
+                        .tint(.green)
+                }
+                .swipeActions(edge: .trailing) {
+                    if showsScheduleActions {
+                        Button {
+                            Task { await env.store.schedule(task, to: .today()) }
+                        } label: { Label("Today", systemImage: "sun.max") }
+                            .tint(Palette.accent)
+                        Button {
+                            Task { await env.store.schedule(task, to: Day.today().adding(days: 1)) }
+                        } label: { Label("Tomorrow", systemImage: "arrow.right") }
+                            .tint(Palette.flag)
+                    } else {
+                        Button {
+                            Task { await env.store.schedule(task, to: nil) }
+                        } label: { Label("Unschedule", systemImage: "tray") }
+                            .tint(Palette.textSecondary)
+                    }
+                }
         }
     }
 }

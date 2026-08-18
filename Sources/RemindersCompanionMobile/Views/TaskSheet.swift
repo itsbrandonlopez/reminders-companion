@@ -28,6 +28,25 @@ struct TaskSheet: View {
                         .lineLimit(3...8)
                 }
 
+                // Tap-only rescheduling. Drag is the fast path when you have the screen
+                // in your hand, but it is unusable over a remote session or one-handed on
+                // a crowded list — this always works.
+                Section("Reschedule") {
+                    HStack(spacing: 8) {
+                        quickButton("Today", day: .today())
+                        quickButton("Tomorrow", day: Day.today().adding(days: 1))
+                        quickButton("+1 Week", day: Day.today().adding(days: 7))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button("Remove Planned Day") {
+                        Task { await env.store.schedule(task, to: nil) }
+                        hasPlanned = false
+                    }
+                    .foregroundStyle(Palette.textSecondary)
+                }
+
                 Section("Dates") {
                     Toggle("Planned day", isOn: $hasPlanned)
                         .onChange(of: hasPlanned) { _, on in
@@ -115,6 +134,15 @@ struct TaskSheet: View {
             }
             .onAppear(perform: load)
         }
+    }
+
+    private func quickButton(_ label: String, day: Day) -> some View {
+        Button(label) {
+            Task { await env.store.schedule(task, to: day) }
+            hasPlanned = true
+            plannedDate = day.startOfDay()
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func load() {
