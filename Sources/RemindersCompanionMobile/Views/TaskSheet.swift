@@ -81,7 +81,7 @@ struct TaskSheet: View {
                                   systemImage: "bell.fill")
                         }
                         if task.isRecurring {
-                            Label("Repeats — complete this one in Reminders", systemImage: "repeat")
+                            Label("Repeats — completing it rolls the series forward", systemImage: "repeat")
                         }
                     }
                     .font(.system(size: 13))

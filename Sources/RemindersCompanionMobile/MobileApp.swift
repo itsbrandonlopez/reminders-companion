@@ -37,6 +37,11 @@ struct RootView: View {
             // Test hook, mirroring the Mac app's --selftest: skip setup and seed the demo
             // list so the views can be driven on a Simulator, whose Reminders database
             // starts empty. Never reachable without the launch argument.
+            if CommandLine.arguments.contains("--test-recurring"), env.store.access == .granted {
+                let report = await env.store.diagnoseRecurringCompletion()
+                let url = URL.documentsDirectory.appendingPathComponent("recurrence.txt")
+                try? report.write(to: url, atomically: true, encoding: .utf8)
+            }
             if CommandLine.arguments.contains("--seed-demo"), env.store.access == .granted {
                 if !env.store.hasSampleData { await env.store.installSampleData() }
                 env.completeSetup()

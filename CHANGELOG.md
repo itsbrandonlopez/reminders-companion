@@ -24,6 +24,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 - `project.yml` for XcodeGen, so the iOS project is generated from a reviewable spec
   rather than a checked-in `.pbxproj`.
 
+### Verified
+
+- **Completing a repeating reminder is safe.** This was the last open question that could
+  have damaged real data: if EventKit did not roll a series forward the way Reminders' own
+  UI does, ticking a repeating task would have silently ended it. Run as a diagnostic
+  against a Simulator's disposable database — completing today's occurrence left an
+  incomplete one due tomorrow with its recurrence rule intact. The warnings in both apps
+  have been corrected accordingly. See `RecurrenceDiagnostic.swift`.
+
 ### Fixed
 
 - **`EKErrorNoStartDate` on iOS.** The SDK requires a start date whenever a due date is

@@ -97,7 +97,7 @@ against the macOS SDK, not assumed:
 |---|---|
 | **Tags, flags, subtasks, list sections** | Absent from EventKit entirely. Cannot be read or written by anyone. |
 | **Folders** | Not exposed either — Reminders' AppleScript can't even *see* a list that lives inside one. Folders here are recreated in-app, not mirrored. |
-| **Repeating reminders** | Completing one through this app hasn't been verified to roll the series forward the way Reminders' own UI does. Tick those in Reminders for now. |
+| **Repeating reminders** | Verified safe. Completing one through this app rolls the series forward to the next occurrence with its recurrence rule intact, exactly as Reminders' own UI does. |
 
 The full investigation, including the trap that shaped the whole date model, is in
 [`spike/FINDINGS.md`](spike/FINDINGS.md).

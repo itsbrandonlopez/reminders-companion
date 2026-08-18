@@ -191,7 +191,7 @@ struct TaskDetailView: View {
                 fact("bell.fill", "Has a notification — never changed by this app")
             }
             if task.isRecurring {
-                fact("repeat", "Repeats — complete this one in Reminders")
+                fact("repeat", "Repeats — completing it rolls the series forward")
             }
             if let url = task.url {
                 HStack(spacing: 7) {
