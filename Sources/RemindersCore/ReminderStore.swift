@@ -287,6 +287,13 @@ public final class ReminderStore {
     /// that invariant is what keeps a bill reminder firing exactly as before, and it is
     /// covered by the Phase 0 alarm-preservation test.
     public func schedule(_ task: TaskItem, to day: Day?) async {
+        await performSchedule(task, to: day, recordUndo: true)
+    }
+
+    /// `recordUndo` is false when this *is* the undo, so undoing can't itself become the
+    /// next undoable action and trap the user in a loop.
+    private func performSchedule(_ task: TaskItem, to day: Day?, recordUndo: Bool) async {
+        let previous = task.plannedDay
         await mutate(task) { reminder in
             if let day {
                 reminder.startDateComponents = Scheduling.plannedComponents(
@@ -295,6 +302,9 @@ public final class ReminderStore {
             } else {
                 reminder.startDateComponents = nil
             }
+        }
+        if recordUndo, previous != day {
+            undoable = .reschedule(task: task, previousDay: previous)
         }
     }
 
@@ -370,24 +380,38 @@ public final class ReminderStore {
 
     /// The task most recently ticked off, retained so it can be un-ticked.
     ///
+    /// The last reversible edit, or nil when there is nothing to undo.
+    ///
     /// Completed reminders vanish from `tasks` — the only fetch is
-    /// `predicateForIncompleteReminders` — so without holding onto this value there is no
+    /// `predicateForIncompleteReminders` — so without holding the value here there is no
     /// way back from a mis-click except opening Reminders.app. Lookup still works because
     /// `calendarItems(withExternalIdentifier:)` is a direct lookup, not a predicate.
-    public private(set) var undoableCompletion: TaskItem?
+    public private(set) var undoable: UndoableAction?
 
     public func setCompleted(_ task: TaskItem, _ completed: Bool) async {
         await mutate(task) { $0.isCompleted = completed }
-        undoableCompletion = completed ? task : nil
+        // Un-completing is itself the undo of completing; recording it would let someone
+        // toggle a task forever via the undo banner.
+        undoable = completed ? .complete(task: task) : nil
     }
 
-    public func undoLastCompletion() async {
-        guard let task = undoableCompletion else { return }
-        undoableCompletion = nil
-        await mutate(task) { $0.isCompleted = false }
+    /// Reverses the last edit and clears the slot. Safe to call when empty.
+    public func undoLast() async {
+        guard let action = undoable else { return }
+        undoable = nil
+        switch action {
+        case let .reschedule(task, previousDay):
+            await performSchedule(task, to: previousDay, recordUndo: false)
+        case let .deadline(task, previousDue):
+            await performSetDueDay(task, to: previousDue, recordUndo: false)
+        case let .move(task, previousListID, _):
+            await performMove(task, toList: previousListID, recordUndo: false)
+        case let .complete(task):
+            await mutate(task) { $0.isCompleted = false }
+        }
     }
 
-    public func dismissUndo() { undoableCompletion = nil }
+    public func dismissUndo() { undoable = nil }
 
     public func setPriority(_ task: TaskItem, _ priority: Priority) async {
         await mutate(task) { $0.priority = priority.rawValue }
@@ -411,6 +435,11 @@ public final class ReminderStore {
     /// deadline earlier. Here the user is editing the date outright, so both directions
     /// are theirs to choose.
     public func setDueDay(_ task: TaskItem, to day: Day?) async {
+        await performSetDueDay(task, to: day, recordUndo: true)
+    }
+
+    private func performSetDueDay(_ task: TaskItem, to day: Day?, recordUndo: Bool) async {
+        let previous = task.dueDay
         await mutate(task) { reminder in
             guard let day else {
                 reminder.dueDateComponents = nil
@@ -419,12 +448,26 @@ public final class ReminderStore {
             reminder.dueDateComponents = Scheduling.deadlineComponents(
                 for: day, preserving: reminder.dueDateComponents
             )
+            // iOS refuses to save a due date with no start date; see Scheduling.
+            satisfyStartDateRequirement(on: reminder)
+        }
+        if recordUndo, previous != day {
+            undoable = .deadline(task: task, previousDue: previous)
         }
     }
 
     public func move(_ task: TaskItem, toList listID: String) async {
+        await performMove(task, toList: listID, recordUndo: true)
+    }
+
+    private func performMove(_ task: TaskItem, toList listID: String, recordUndo: Bool) async {
         guard let calendar = store.calendar(withIdentifier: listID) else { return }
+        let previousID = task.listID
+        let previousName = task.listName
         await mutate(task) { $0.calendar = calendar }
+        if recordUndo, previousID != listID {
+            undoable = .move(task: task, previousListID: previousID, previousListName: previousName)
+        }
     }
 
     public func delete(_ task: TaskItem) async {

@@ -52,6 +52,19 @@ struct RootTabView: View {
                 // Clears the floating tab bar rather than sitting on top of it.
                 .padding(.bottom, 96)
         }
+        .overlay(alignment: .bottom) {
+            if let action = env.store.undoable {
+                UndoBanner(
+                    action: action,
+                    onUndo: { Task { await env.store.undoLast() } },
+                    onDismiss: { env.store.dismissUndo() }
+                )
+                // Sits above the tab bar, and clear of the add button's own row.
+                .padding(.bottom, 96)
+                .id(action)
+            }
+        }
+        .animation(.spring(duration: 0.3), value: env.store.undoable)
         .sheet(isPresented: $isAdding) {
             QuickAddSheet(defaultDay: addDefaultDay).environment(env)
         }

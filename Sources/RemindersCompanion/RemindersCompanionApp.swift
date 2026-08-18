@@ -24,6 +24,13 @@ struct RemindersCompanionApp: App {
         }
         .defaultSize(width: 1500, height: 900)
         .commands {
+            CommandGroup(replacing: .undoRedo) {
+                Button("Undo \(env.store.undoable?.label ?? "")") {
+                    Task { await env.store.undoLast() }
+                }
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(env.store.undoable == nil)
+            }
             CommandGroup(after: .sidebar) {
                 Button("Previous Week") { env.jumpWeek(-1) }
                     .keyboardShortcut("[", modifiers: .command)

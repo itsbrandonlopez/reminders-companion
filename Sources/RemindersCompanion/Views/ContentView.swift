@@ -93,8 +93,8 @@ struct ContentView: View {
                 if let error = env.store.lastError {
                     banner(error, color: Palette.overdue) { env.store.clearError() }
                 }
-                if let completed = env.store.undoableCompletion {
-                    undoBanner(for: completed)
+                if let action = env.store.undoable {
+                    undoBanner(for: action)
                 }
                 switch mode {
                 case .week: WeekBoardView()
@@ -125,14 +125,16 @@ struct ContentView: View {
         .tint(Palette.accent)
     }
 
-    /// Completed reminders drop out of every board immediately, so a mis-click is
-    /// otherwise unrecoverable without opening Reminders.app.
-    private func undoBanner(for task: TaskItem) -> some View {
+    /// Every edit here writes straight through to Reminders, and a completed task drops
+    /// out of the board immediately, so without this a mis-drop or mis-click is only
+    /// recoverable by opening Reminders.app.
+    private func undoBanner(for action: UndoableAction) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 11))
-            Text("Completed “\(task.title)”").font(.system(size: 11.5)).lineLimit(1)
+            Image(systemName: "arrow.uturn.backward.circle.fill").font(.system(size: 11))
+            Text("\(action.label) “\(action.task.title)”")
+                .font(.system(size: 11.5)).lineLimit(1)
             Spacer()
-            Button("Undo") { Task { await env.store.undoLastCompletion() } }
+            Button("Undo") { Task { await env.store.undoLast() } }
                 .buttonStyle(.borderless)
                 .font(.system(size: 11.5, weight: .medium))
             Button {

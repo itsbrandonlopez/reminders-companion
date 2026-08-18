@@ -4,6 +4,34 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Undo
+
+### Added
+
+- **Undo now covers every reversible edit**, not just completion: rescheduling (including
+  drag-to-a-day), deadline changes, and moving a task between lists. On Mac it's the
+  standard **⌘Z** plus a banner; on iPhone a banner above the tab bar that auto-dismisses
+  after six seconds, since a permanent undo affordance on a phone just becomes furniture.
+- The banner names what happened — "Moved · Undo", "Deadline changed · Undo" — and
+  distinguishes scheduling something for the first time ("Scheduled") from moving an
+  already-dated task ("Moved").
+
+### Notes
+
+- Deliberately **one step, not a stack.** Every edit writes straight through to Reminders,
+  which other devices and the Reminders app itself may be changing concurrently. A deep
+  stack would accumulate entries whose original state has since been overwritten
+  elsewhere, so "undo" would quietly start meaning "overwrite whatever is there now with
+  something stale". One step back is what can actually be guaranteed.
+- Undoing never becomes itself undoable, so the banner can't trap you in a loop.
+
+### Fixed
+
+- While building this, a patch dropped `satisfyStartDateRequirement` from `setDueDay` —
+  silently regressing the iOS `EKErrorNoStartDate` fix, which would have made setting a
+  deadline fail to save on iPhone for any task without a planned day. Caught by extending
+  the diagnostic to verify undo against live EventKit rather than trusting the build.
+
 ## [Unreleased] — Release hygiene
 
 ### Changed

@@ -71,6 +71,62 @@ enum WidgetDiagnostic {
 
         log.append("")
         log.append(await quickAddChecks(env: env))
+        log.append("")
+        log.append(await undoChecks(env: env))
+        return log.joined(separator: "\n")
+    }
+
+    /// Undo writes straight through to Reminders, so "it reversed" has to mean the
+    /// reminder's actual state came back — not just that the in-memory value changed.
+    private static func undoChecks(env: MobileEnvironment) async -> String {
+        var log = ["── Undo diagnostic ──"]
+        guard let list = env.store.lists.first(where: { $0.title == ReminderStore.sampleListName })
+                ?? env.store.lists.first(where: \.isEditable) else {
+            return "  ✗ no editable list"
+        }
+
+        let title = "Undo probe \(UUID().uuidString.prefix(6))"
+        let original = Day.today().adding(days: 2)
+        await env.store.create(title: title, in: list.id, on: original)
+        await env.store.refresh()
+        guard var task = env.store.tasks.first(where: { $0.title == title }) else {
+            return "  ✗ could not create the probe"
+        }
+
+        // 1. Reschedule, then undo.
+        await env.store.schedule(task, to: Day.today().adding(days: 5))
+        task = env.store.tasks.first { $0.id == task.id } ?? task
+        let moved = task.plannedDay
+        await env.store.undoLast()
+        task = env.store.tasks.first { $0.id == task.id } ?? task
+        log.append("  reschedule: \(original) → \(moved?.description ?? "nil") → undo → \(task.plannedDay?.description ?? "nil")")
+        log.append("    \(task.plannedDay == original ? "✓ restored" : "✗ not restored")")
+
+        // 2. Deadline, then undo. Started with none, so undo must clear it again.
+        await env.store.setDueDay(task, to: Day.today().adding(days: 9))
+        task = env.store.tasks.first { $0.id == task.id } ?? task
+        let dueSet = task.dueDay
+        await env.store.undoLast()
+        task = env.store.tasks.first { $0.id == task.id } ?? task
+        log.append("  deadline: nil → \(dueSet?.description ?? "nil") → undo → \(task.dueDay?.description ?? "nil")")
+        log.append("    \(task.dueDay == nil ? "✓ cleared again" : "✗ deadline left behind")")
+
+        // 3. Move between lists, then undo.
+        if let other = env.store.lists.first(where: { $0.isEditable && $0.id != list.id }) {
+            await env.store.move(task, toList: other.id)
+            task = env.store.tasks.first { $0.id == task.id } ?? task
+            let movedTo = task.listName
+            await env.store.undoLast()
+            task = env.store.tasks.first { $0.id == task.id } ?? task
+            log.append("  list: \(list.title) → \(movedTo) → undo → \(task.listName)")
+            log.append("    \(task.listID == list.id ? "✓ restored" : "✗ not restored")")
+        }
+
+        // 4. Undoing must not itself become undoable, or the banner would never clear.
+        let slotAfterUndo = env.store.undoable == nil
+        log.append("  undo slot cleared after undoing: \(slotAfterUndo ? "✓" : "✗ would loop")")
+
+        await env.store.delete(task)
         return log.joined(separator: "\n")
     }
 
