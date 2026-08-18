@@ -7,6 +7,7 @@ import SwiftUI
 /// returns in structure. The list colour lives on each row instead.
 struct WeekView: View {
     @Environment(MobileEnvironment.self) private var env
+    @State private var isAdding = false
 
     var body: some View {
         NavigationStack {
@@ -14,6 +15,12 @@ struct WeekView: View {
                 dayStrip
                 Divider()
                 list
+            }
+            .sheet(isPresented: $isAdding) {
+                // Adding from a past or future week defaults to that week's Monday rather
+                // than today, so the new task lands where you were looking.
+                QuickAddSheet(defaultDay: env.week.contains(.today()) ? .today() : env.week.first)
+                    .environment(env)
             }
             .navigationTitle(weekLabel)
             .navigationBarTitleDisplayMode(.inline)
@@ -26,6 +33,9 @@ struct WeekView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Today") { env.goToToday() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { isAdding = true } label: { Image(systemName: "plus") }
                 }
             }
         }

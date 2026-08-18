@@ -256,6 +256,36 @@ final class AppEnvironment {
         reloadOverlay()
     }
 
+    /// Creates a task from raw quick-add text, honouring any `!` priority, `#list` and
+    /// natural-language date it contains.
+    ///
+    /// `defaultDay` is what the column implies — Thursday's column passes Thursday, the
+    /// unscheduled pool passes nil. An explicit date in the text overrides it, because
+    /// typing "tomorrow" is a deliberate act and the column is merely where the cursor
+    /// happened to be.
+    func quickAdd(_ input: String, defaultDay: Day?) {
+        let parsed = QuickAddParser.parse(input)
+        let title = parsed.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+
+        let listID = parsed.listToken
+            .flatMap { QuickAddParser.matchList($0, in: store.lists.filter(\.isEditable))?.id }
+            // Default to the list Siri writes to, so quick-add and voice capture land in
+            // the same place.
+            ?? visibleLists.first(where: \.isDefault)?.id
+            ?? visibleLists.first(where: \.isEditable)?.id
+        guard let listID else { return }
+
+        Task {
+            await store.create(
+                title: title,
+                in: listID,
+                on: parsed.day ?? defaultDay,
+                priority: parsed.priority ?? .none
+            )
+        }
+    }
+
     // MARK: - Folders
 
     /// Bumped after every folder mutation so `@Observable` re-renders the sidebar.

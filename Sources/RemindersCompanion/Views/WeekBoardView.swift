@@ -195,12 +195,8 @@ struct DayColumn: View {
                 EmptyHint(text: "Nothing planned")
             }
         } footer: {
-            QuickAddField(placeholder: "Add task", text: $newTitle) { title in
-                // Default to the list Siri writes to, so quick-add and voice capture land
-                // in the same place.
-                guard let listID = env.visibleLists.first(where: \.isDefault)?.id
-                        ?? env.visibleLists.first(where: \.isEditable)?.id else { return }
-                Task { await env.store.create(title: title, in: listID, on: day) }
+            QuickAddField(placeholder: "Add task  ·  !! #list tomorrow", text: $newTitle) { text in
+                env.quickAdd(text, defaultDay: day)
             }
         }
         .dropDestination(for: String.self) { ids, _ in
@@ -317,10 +313,8 @@ struct UnscheduledColumn: View {
                 EmptyHint(text: "Nothing waiting")
             }
         } footer: {
-            QuickAddField(placeholder: "Add task", text: $newTitle) { title in
-                guard let listID = env.visibleLists.first(where: \.isDefault)?.id
-                        ?? env.visibleLists.first(where: \.isEditable)?.id else { return }
-                Task { await env.store.create(title: title, in: listID, on: nil) }
+            QuickAddField(placeholder: "Add task  ·  !! #list tomorrow", text: $newTitle) { text in
+                env.quickAdd(text, defaultDay: nil)
             }
         }
     }
@@ -454,6 +448,13 @@ struct QuickAddField: View {
                 text = ""
                 onSubmit(trimmed)
             }
+            .help("""
+                Type a task. Optional shorthand:
+                  !  !!  !!!      low / medium / high priority
+                  #list           file it in a list, e.g. #freelance
+                  tomorrow, friday, next week, in 3 days
+                A date word only counts at the start or end, so "Prep Tuesday's                 invoice" keeps its title.
+                """)
     }
 }
 

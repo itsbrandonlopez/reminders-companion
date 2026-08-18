@@ -119,6 +119,34 @@ final class MobileEnvironment {
 
     var pastDueCount: Int { backlog.count }
 
+    // MARK: - Quick add
+
+    /// Creates a task from raw quick-add text, honouring any `!` priority, `#list` and
+    /// natural-language date it contains. Shares `QuickAddParser` with the Mac app, so
+    /// the shorthand behaves identically on both.
+    ///
+    /// `defaultDay` is what the surrounding view implies — Today passes today, Triage's
+    /// no-date pile passes nil. An explicit date in the text overrides it.
+    func quickAdd(_ input: String, defaultDay: Day?) async {
+        let parsed = QuickAddParser.parse(input)
+        let title = parsed.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+
+        let editable = store.lists.filter(\.isEditable)
+        let listID = parsed.listToken
+            .flatMap { QuickAddParser.matchList($0, in: editable)?.id }
+            ?? editable.first(where: \.isDefault)?.id
+            ?? editable.first?.id
+        guard let listID else { return }
+
+        await store.create(
+            title: title,
+            in: listID,
+            on: parsed.day ?? defaultDay,
+            priority: parsed.priority ?? .none
+        )
+    }
+
     // MARK: - Calendar overlay
 
     func events(on day: Day) -> [CalendarEvent] {

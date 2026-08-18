@@ -150,8 +150,19 @@ struct ListColumn: View {
             if tasks.isEmpty { EmptyHint(text: "Clear") }
         } footer: {
             if list.isEditable {
-                QuickAddField(placeholder: "Add task", text: $newTitle) { title in
-                    Task { await env.store.create(title: title, in: list.id, on: .today()) }
+                QuickAddField(placeholder: "Add task", text: $newTitle) { text in
+                    // This column *is* a list, so it wins over any #token in the text.
+                    let parsed = QuickAddParser.parse(text)
+                    let title = parsed.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !title.isEmpty else { return }
+                    Task {
+                        await env.store.create(
+                            title: title,
+                            in: list.id,
+                            on: parsed.day ?? .today(),
+                            priority: parsed.priority ?? .none
+                        )
+                    }
                 }
             }
         }

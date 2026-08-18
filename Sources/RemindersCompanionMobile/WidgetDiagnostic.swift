@@ -67,6 +67,54 @@ enum WidgetDiagnostic {
             : "    ✓ SAFE — completion via the widget's own code path persisted correctly.")
 
         await env.store.delete(probe)
+
+        log.append("")
+        log.append(await quickAddChecks(env: env))
+        return log.joined(separator: "\n")
+    }
+
+    /// Proves quick-add end to end: parsed text in, a correctly dated, prioritised and
+    /// filed reminder out of EventKit. The parser itself is unit-tested; this checks the
+    /// wiring between it and `create`.
+    private static func quickAddChecks(env: MobileEnvironment) async -> String {
+        var log = ["── Quick-add diagnostic ──"]
+        let stamp = UUID().uuidString.prefix(6)
+
+        let title = "QA probe \(stamp)"
+        await env.quickAdd("!! \(title) tomorrow", defaultDay: nil)
+        await env.store.refresh()
+
+        guard let made = env.store.tasks.first(where: { $0.title == title }) else {
+            log.append("  ✗ quick-add produced no task (title should have been \"\(title)\")")
+            return log.joined(separator: "\n")
+        }
+        log.append("  input   : \"!! \(title) tomorrow\"")
+        log.append("  title   : \(made.title)")
+        log.append("  day     : \(made.plannedDay?.description ?? "none")")
+        log.append("  priority: \(made.priority.label)")
+        log.append("  list    : \(made.listName)")
+
+        let expectedDay = Day.today().adding(days: 1)
+        let titleClean = made.title == title
+        let dayRight = made.plannedDay == expectedDay
+        let priorityRight = made.priority == .medium
+
+        log.append("  ▸ VERDICT")
+        log.append("    tokens stripped from title : \(titleClean ? "✓" : "✗")")
+        log.append("    scheduled for tomorrow     : \(dayRight ? "✓" : "✗ expected \(expectedDay)")")
+        log.append("    priority applied           : \(priorityRight ? "✓" : "✗")")
+
+        // And the protective case: a date word mid-sentence must survive into the title.
+        let midTitle = "Prep Tuesday's invoice \(stamp)"
+        await env.quickAdd(midTitle, defaultDay: nil)
+        await env.store.refresh()
+        let survived = env.store.tasks.contains { $0.title == midTitle }
+        log.append("    mid-sentence date preserved: \(survived ? "✓" : "✗ title was altered")")
+
+        await env.store.delete(made)
+        if let m = env.store.tasks.first(where: { $0.title == midTitle }) {
+            await env.store.delete(m)
+        }
         return log.joined(separator: "\n")
     }
 }

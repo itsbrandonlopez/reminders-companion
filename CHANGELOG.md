@@ -4,6 +4,41 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Quick add
+
+### Added
+
+- **Quick-add shorthand**, shared by both apps via a new `QuickAddParser` in
+  `RemindersCore`:
+  - `!` / `!!` / `!!!` for low / medium / high priority
+  - `#list` to file it, matched case-, space- and diacritic-insensitively so `#cafelopez`
+    finds "Café Lopez" (an exact match always beats a prefix match, so `#work` can't be
+    stolen by "Work Archive")
+  - Natural-language dates: `today`, `tonight`, `tomorrow`/`tmw`, `next week`,
+    `in 3 days`, weekday names, and `next friday`
+- **Task creation on iPhone**, which previously did not exist at all — the phone could
+  complete, reschedule and edit, but not add. A **+** on all three tabs opens a quick-add
+  sheet whose defaults follow context: Today creates for today, Week for the week you're
+  looking at, Triage's no-date pile creates undated.
+- The sheet shows a live **"Will create"** summary — resolved title, list, day and
+  priority — before anything is saved, so a mis-parse is visible rather than discovered
+  later.
+
+### Notes
+
+- **A date phrase is only recognised at the very start or end of the input.** This is the
+  rule that keeps "Prep Tuesday's invoice" and "Move the Friday meeting" intact: a date
+  word mid-sentence is part of the sentence. Silently eating a real word out of a title is
+  a worse failure than not parsing, because the damage stays invisible until the user goes
+  looking for the task.
+- Sigils (`!`, `#`) may appear anywhere, since nothing else in a title plausibly looks like
+  a standalone `!!!` or a `#word`. An exclamation attached to a word — "Ship it!" — is
+  punctuation and survives.
+- An explicit date in the text overrides the column or tab's implied day, because typing
+  "tomorrow" is deliberate and the column is just where the cursor happened to be.
+- 25 parser tests, plus an end-to-end check that parsed input produces a correctly dated,
+  prioritised and filed reminder in EventKit.
+
 ## [Unreleased] — Widgets
 
 ### Added
