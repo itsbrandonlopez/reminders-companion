@@ -63,6 +63,12 @@ badged on the day header. "Can I take this on Thursday?" stops being a guess.
 
 Read-only. The overlay never creates, edits, or deletes an event.
 
+### Everything the task actually holds
+
+Hover any card and open its details: notes, the exact deadline, planned day, priority,
+list and estimate — all editable in place. Alarms and repeat rules are shown but left
+read-only, because those are the parts you need to be able to trust.
+
 ### Built to disappear
 
 Light and dark themes that follow your system live. Folders, manual ordering, and time

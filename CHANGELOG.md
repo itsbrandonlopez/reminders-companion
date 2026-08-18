@@ -4,6 +4,27 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-08-18
+
+### Added
+
+- **Task details.** A panel on every card — the ellipsis on hover, or *Show Details* from
+  the context menu — showing everything Reminders holds for that task: notes, deadline,
+  planned day, priority, list and estimate, all editable. Alarms, recurrence and any
+  attached URL are shown read-only.
+- Cards now show a **notes indicator** and, for a timed deadline, the **time of day** —
+  the detail that matters on a bill and that a day column alone cannot convey.
+- `create` accepts notes, a deadline and a priority, so a task no longer has to start life
+  as a bare title.
+
+### Notes
+
+- Alarms and recurrence are deliberately read-only. Editing them well means reproducing
+  Reminders' own notification rules; showing them plainly and pointing at Reminders is
+  more honest than a half-built editor.
+- Title and notes commit when the panel is dismissed rather than on every keystroke, since
+  each write round-trips to EventKit and refetches.
+
 ## [1.1.0] — 2026-08-18
 
 ### Added
@@ -99,5 +120,6 @@ source of truth.
 - macOS only. The domain logic is UI-free and platform-agnostic, so an iPhone app and
   widget can be added without rework.
 
+[1.2.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.2.0
 [1.1.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.1.0
 [1.0.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.0.0

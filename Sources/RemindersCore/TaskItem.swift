@@ -99,6 +99,17 @@ public struct TaskItem: Identifiable, Hashable, Sendable {
         self.dueDate = dueDate; self.rank = rank; self.estimateMinutes = estimateMinutes
     }
 
+    public var hasNotes: Bool { !(notes ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// The wall-clock time on the deadline, when it has one. This is the detail that
+    /// matters on a bill and that a day column alone cannot convey.
+    public var dueTimeLabel: String? {
+        guard dueIsTimed, let dueDate else { return nil }
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        return f.string(from: dueDate)
+    }
+
     /// Where this task sits on the board: planned day if set, else its deadline.
     public var boardDay: Day? { plannedDay ?? dueDay }
 

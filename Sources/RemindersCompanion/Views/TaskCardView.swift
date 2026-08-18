@@ -31,6 +31,7 @@ struct TaskCardView: View {
     @Environment(AppEnvironment.self) private var env
     @State private var isHovering = false
     @State private var isReorderTarget = false
+    @State private var showsDetail = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
@@ -73,6 +74,17 @@ struct TaskCardView: View {
                             Text(due.monthDayLabel).font(.system(size: 10.5))
                         }
                         .foregroundStyle(task.isOverdue() ? Palette.overdue : Palette.flag)
+                    }
+                    if let time = task.dueTimeLabel {
+                        Text(time)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(task.isOverdue() ? Palette.overdue : Palette.textSecondary)
+                    }
+                    if task.hasNotes {
+                        Image(systemName: "text.alignleft")
+                            .font(.system(size: 8.5))
+                            .foregroundStyle(Palette.textTertiary)
+                            .help("Has notes")
                     }
                     if task.hasAlarms {
                         Image(systemName: "bell.fill")
@@ -119,7 +131,11 @@ struct TaskCardView: View {
                     .offset(y: -4)
             }
         }
+        .overlay(alignment: .topTrailing) { detailButton }
         .overlay(alignment: .trailing) { spanHandle }
+        .popover(isPresented: $showsDetail, arrowEdge: .trailing) {
+            TaskDetailView(task: task).environment(env)
+        }
         .opacity(isContinuation ? 0.5 : 1)
         .onHover { isHovering = $0 }
         .contextMenu { menu }
@@ -130,6 +146,20 @@ struct TaskCardView: View {
             guard let onDropAbove, id != task.id else { return false }
             return onDropAbove(id)
         } isTargeted: { isReorderTarget = $0 && onDropAbove != nil }
+    }
+
+    @ViewBuilder private var detailButton: some View {
+        if isHovering, !isContinuation {
+            Button { showsDetail = true } label: {
+                Image(systemName: "ellipsis.circle.fill")
+                    .font(.system(size: 12))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(Palette.textSecondary, Palette.card)
+            }
+            .buttonStyle(.plain)
+            .padding(5)
+            .help("Show details")
+        }
     }
 
     @ViewBuilder private var spanHandle: some View {
@@ -158,6 +188,8 @@ struct TaskCardView: View {
     }
 
     @ViewBuilder private var menu: some View {
+        Button("Show Details…") { showsDetail = true }
+        Divider()
         Menu("Priority") {
             ForEach(Priority.allCases, id: \.self) { p in
                 Button(p.label) { Task { await env.store.setPriority(task, p) } }

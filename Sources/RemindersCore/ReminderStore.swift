@@ -341,7 +341,32 @@ public final class ReminderStore {
     }
 
     public func setTitle(_ task: TaskItem, _ title: String) async {
-        await mutate(task) { $0.title = title }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }   // Reminders has no concept of a blank task
+        await mutate(task) { $0.title = trimmed }
+    }
+
+    /// Empty notes are written back as nil so Reminders does not keep an empty body.
+    public func setNotes(_ task: TaskItem, _ notes: String) async {
+        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        await mutate(task) { $0.notes = trimmed.isEmpty ? nil : trimmed }
+    }
+
+    /// Sets or clears the deadline directly, preserving any time of day already on it.
+    ///
+    /// Distinct from `setSpanEnd`, which is the drag gesture and refuses to move a
+    /// deadline earlier. Here the user is editing the date outright, so both directions
+    /// are theirs to choose.
+    public func setDueDay(_ task: TaskItem, to day: Day?) async {
+        await mutate(task) { reminder in
+            guard let day else {
+                reminder.dueDateComponents = nil
+                return
+            }
+            reminder.dueDateComponents = Scheduling.deadlineComponents(
+                for: day, preserving: reminder.dueDateComponents
+            )
+        }
     }
 
     public func move(_ task: TaskItem, toList listID: String) async {
@@ -360,13 +385,27 @@ public final class ReminderStore {
         }
     }
 
-    public func create(title: String, in listID: String, on day: Day?) async {
+    public func create(
+        title: String,
+        in listID: String,
+        on day: Day?,
+        notes: String? = nil,
+        due: Day? = nil,
+        priority: Priority = .none
+    ) async {
         guard let calendar = store.calendar(withIdentifier: listID) else { return }
         let reminder = EKReminder(eventStore: store)
         reminder.title = title
         reminder.calendar = calendar
+        reminder.priority = priority.rawValue
+        if let notes, !notes.isEmpty { reminder.notes = notes }
+        if let due {
+            reminder.dueDateComponents = Scheduling.deadlineComponents(for: due, preserving: nil)
+        }
         if let day {
-            reminder.startDateComponents = Scheduling.plannedComponents(for: day, alongside: nil)
+            reminder.startDateComponents = Scheduling.plannedComponents(
+                for: day, alongside: reminder.dueDateComponents
+            )
         }
         do {
             markLocalWrite()
