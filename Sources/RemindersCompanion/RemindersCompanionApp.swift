@@ -56,6 +56,8 @@ struct RemindersCompanionApp: App {
                 } else {
                     Button("Add Demo Tasks…") { env.pendingSampleAction = .install }
                 }
+                Divider()
+                Button("Run Setup Again…") { env.restartSetup() }
             }
         }
     }

@@ -13,6 +13,9 @@ final class AppEnvironment {
     /// refusing to launch.
     private(set) var sidecarWarning: String?
 
+    /// Convenience for setup: selects every list, i.e. clears the filter.
+    func includeAllLists() { selectedListIDs.removeAll() }
+
     /// Which lists take part in the aggregate views. Empty means all of them.
     /// Driven by the checkmark menu, kept separate from `focus` so drilling into one
     /// list does not disturb the set you normally work with.
@@ -29,6 +32,22 @@ final class AppEnvironment {
         var id: Int { self == .install ? 0 : 1 }
     }
     var pendingSampleAction: SampleAction?
+
+    /// Whether first-run setup has been completed. Persisted, so setup is a one-time
+    /// experience rather than a gate the app re-litigates on every launch.
+    private(set) var hasCompletedSetup: Bool = false
+
+    func completeSetup() {
+        hasCompletedSetup = true
+        defaults.set(true, forKey: Self.setupCompleteKey)
+    }
+
+    /// Runs setup again from the beginning. Reachable from the Help menu, mostly so the
+    /// flow can be shown to someone else without wiping preferences.
+    func restartSetup() {
+        hasCompletedSetup = false
+        defaults.set(false, forKey: Self.setupCompleteKey)
+    }
 
     /// Which calendars the overlay draws. Persisted, because re-picking your work
     /// calendar on every launch would make the feature not worth using.
@@ -67,6 +86,7 @@ final class AppEnvironment {
     private static let unscheduledKey = "unscheduledListIDs"
     private static let seededFoldersKey = "didSeedFolders"
     private static let backlogSortKey = "backlogSort"
+    private static let setupCompleteKey = "hasCompletedSetup"
 
     /// Held so the sidebar can read and mutate folders. Folders are sidecar-only: the
     /// Reminders folder hierarchy is not exposed by any API. See `ListFolder`.
@@ -89,6 +109,7 @@ final class AppEnvironment {
         self.unscheduledListIDs = Set(defaults.stringArray(forKey: Self.unscheduledKey) ?? [])
         self.backlogSort = BacklogSort(rawValue: defaults.string(forKey: Self.backlogSortKey) ?? "")
             ?? .oldestFirst
+        self.hasCompletedSetup = defaults.bool(forKey: Self.setupCompleteKey)
     }
 
     /// The lists currently on screen: one when drilled in, otherwise the checked set.

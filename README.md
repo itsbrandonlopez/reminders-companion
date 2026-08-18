@@ -100,8 +100,11 @@ The full investigation, including the trap that shaped the whole date model, is 
 
 ## Trying it out
 
-Nothing to configure — it reads whatever is already in your Reminders. If your account is
-sparse, **Help → Add Demo Tasks** creates a separate list called *Companion Demo* with a
+On first launch a short setup walks you through it: what the app does with your data,
+connecting your reminders, choosing which lists you want to plan with, and optionally
+overlaying your calendar. Each permission is asked for only after you've seen why, and
+calendar access can be skipped entirely. If your account is sparse, setup offers a set of demo tasks — or use
+**Help → Add Demo Tasks** any time, which creates a separate list called *Companion Demo* with a
 dozen examples covering every part of the board: an unscheduled pool, a multi-day span, a
 backlog item, priorities, and one timed reminder with a real alarm so you can watch
 rescheduling leave it untouched.

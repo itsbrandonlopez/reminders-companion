@@ -14,10 +14,16 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            switch env.store.access {
-            case .granted: board
-            case .unknown: ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            default: AccessGateView()
+            if !env.hasCompletedSetup {
+                OnboardingView()
+            } else {
+                switch env.store.access {
+                case .granted: board
+                case .unknown: ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Setup is done but access was revoked afterwards — the gate explains how
+                // to restore it without dragging the user back through onboarding.
+                default: AccessGateView()
+                }
             }
         }
         .background(Palette.window)
@@ -44,8 +50,10 @@ struct ContentView: View {
                  : "Deletes the “\(ReminderStore.sampleListName)” list and everything in it. No other list is affected.")
         }
         .task {
+            // During setup the permission prompt is triggered by the user, after the
+            // reason has been explained. Firing it here would pre-empt that.
             if env.store.access == .notDetermined {
-                await env.store.requestAccess()
+                if env.hasCompletedSetup { await env.store.requestAccess() }
             } else if env.store.access == .granted {
                 await env.store.refresh()
             }

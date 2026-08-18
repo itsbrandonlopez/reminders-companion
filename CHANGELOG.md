@@ -4,6 +4,26 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-08-18
+
+### Added
+
+- **First-run setup.** A five-step flow that explains what the app does before asking for
+  anything: the promises it makes about your data, Reminders access, choosing which lists
+  to plan with, an optional calendar overlay, and a summary. Each permission is requested
+  by an explicit tap *after* the reason is on screen, rather than by a bare system dialog
+  on launch.
+- Calendar access can be skipped outright during setup — the app is fully functional
+  without it and says so.
+- The setup summary offers demo tasks when an account has little in it yet.
+- **Help → Run Setup Again** replays the flow without clearing preferences.
+
+### Changed
+
+- The app no longer requests Reminders access automatically on first launch; setup drives
+  it. Once setup is complete, revoked access still shows the existing access gate rather
+  than restarting onboarding.
+
 ## [1.0.0] — 2026-08-18
 
 First release. A macOS planning board over Apple Reminders that leaves Reminders as the
@@ -79,4 +99,5 @@ source of truth.
 - macOS only. The domain logic is UI-free and platform-agnostic, so an iPhone app and
   widget can be added without rework.
 
+[1.1.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.1.0
 [1.0.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.0.0
