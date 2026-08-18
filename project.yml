@@ -6,6 +6,16 @@
 #
 #   brew install xcodegen   # if missing
 #   xcodegen generate
+#
+# Building for a device, archiving, or uploading to TestFlight additionally needs a Team
+# ID from an enrolled Apple Developer account (developer.apple.com/account → Membership).
+# Pass it as an environment variable rather than hardcoding it, since it doesn't exist
+# until that account does:
+#
+#   export DEVELOPMENT_TEAM=ABCDE12345
+#   xcodegen generate
+#
+# Simulator builds need no team and work with this unset.
 name: RemindersCompanionMobile
 
 options:
@@ -45,12 +55,23 @@ targets:
         NSCalendarsFullAccessUsageDescription: >-
           Reminders Companion can overlay your calendar so you can see which days are
           already booked. Events are only ever read, never changed.
+        CFBundleIconName: AppIcon
+        # The app uses no cryptography beyond what iOS itself provides (Keychain, HTTPS).
+        # This is a truthful "no" that also skips App Store Connect's export-compliance
+        # question on every upload — leaving it unset makes the question reappear each time.
+        ITSAppUsesNonExemptEncryption: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.brandonlopez.RemindersCompanionMobile
         MARKETING_VERSION: "1.0"
+        # App Store Connect requires each upload to carry a higher build number than the
+        # last, within a given marketing version. Bump with ./bump-build.sh before
+        # archiving, not by hand.
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_USER_SCRIPT_SANDBOXING: YES
         SWIFT_STRICT_CONCURRENCY: complete
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
