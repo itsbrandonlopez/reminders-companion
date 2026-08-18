@@ -5,7 +5,17 @@ import SwiftUI
 /// live in Triage, one tap away and badged when the backlog is not empty.
 struct RootTabView: View {
     @Environment(MobileEnvironment.self) private var env
-    @State private var selection = 0
+    /// Test hook: `--tab week|triage` opens straight to a tab, so the views can be driven
+    /// headlessly on a Simulator. Defaults to Today.
+    @State private var selection = {
+        guard let i = CommandLine.arguments.firstIndex(of: "--tab"),
+              i + 1 < CommandLine.arguments.count else { return 0 }
+        switch CommandLine.arguments[i + 1] {
+        case "week": return 1
+        case "triage": return 2
+        default: return 0
+        }
+    }()
 
     var body: some View {
         TabView(selection: $selection) {

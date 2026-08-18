@@ -56,6 +56,28 @@ struct TodayView: View {
             .listStyle(.insetGrouped)
             .navigationTitle("Today")
             .refreshable { await env.store.refresh() }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        // A fresh Simulator has an empty Reminders database, and so does a
+                        // new user's account. Both need something to try the app on.
+                        if env.store.hasSampleData {
+                            Button("Remove Demo Tasks", role: .destructive) {
+                                Task { await env.store.removeSampleData() }
+                            }
+                        } else {
+                            Button("Add Demo Tasks") {
+                                Task { await env.store.installSampleData() }
+                            }
+                        }
+                        Divider()
+                        Button("Refresh") { Task { await env.store.refresh() } }
+                        Button("Run Setup Again") { env.restartSetup() }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
         }
     }
 }

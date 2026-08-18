@@ -33,6 +33,14 @@ struct RootView: View {
         .task {
             if env.store.access == .granted { await env.store.refresh() }
             env.loadOverlayIfAuthorized()
+
+            // Test hook, mirroring the Mac app's --selftest: skip setup and seed the demo
+            // list so the views can be driven on a Simulator, whose Reminders database
+            // starts empty. Never reachable without the launch argument.
+            if CommandLine.arguments.contains("--seed-demo"), env.store.access == .granted {
+                if !env.store.hasSampleData { await env.store.installSampleData() }
+                env.completeSetup()
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             // Coming back from Reminders or another device's edit should not need a pull
