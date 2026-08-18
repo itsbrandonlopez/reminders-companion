@@ -1,3 +1,4 @@
+#if DEBUG
 import EventKit
 import Foundation
 
@@ -117,3 +118,4 @@ extension ReminderStore {
         await refresh()
     }
 }
+#endif

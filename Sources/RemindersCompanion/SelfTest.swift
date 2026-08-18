@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import RemindersCore
 
@@ -89,3 +90,4 @@ enum SelfTest {
         return log.joined(separator: "\n")
     }
 }
+#endif

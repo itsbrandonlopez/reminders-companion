@@ -4,6 +4,22 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Release hygiene
+
+### Changed
+
+- **Every development hook is now compiled out of Release builds.** `--seed-demo`,
+  `--test-widget`, `--test-recurring`, `--tab` and the Mac's `--selftest` and
+  `--appearance`, along with `WidgetDiagnostic`, `SelfTest` and `RecurrenceDiagnostic`,
+  all sit behind `#if DEBUG`. They create and delete real reminders, which has no place in
+  a shipping binary.
+- Collected into `DebugHooks` in each app rather than scattered inline, so the shipping
+  code path reads without conditionals threaded through it.
+- Verified by making a Release build fail on purpose: an unguarded reference to
+  `WidgetDiagnostic` from shipping code produces "cannot find 'WidgetDiagnostic' in
+  scope", proving the exclusion is real rather than assumed. Debug hooks confirmed still
+  functional afterwards.
+
 ## [Unreleased] — Quick add
 
 ### Changed

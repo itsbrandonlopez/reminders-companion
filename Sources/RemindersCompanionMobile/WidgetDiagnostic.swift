@@ -1,3 +1,4 @@
+#if DEBUG
 import EventKit
 import RemindersCore
 import Foundation
@@ -118,3 +119,4 @@ enum WidgetDiagnostic {
         return log.joined(separator: "\n")
     }
 }
+#endif

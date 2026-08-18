@@ -35,30 +35,9 @@ struct RootView: View {
             if env.store.access == .granted { await env.store.refresh() }
             env.loadOverlayIfAuthorized()
 
-            // Test hook, mirroring the Mac app's --selftest: skip setup and seed the demo
-            // list so the views can be driven on a Simulator, whose Reminders database
-            // starts empty. Never reachable without the launch argument.
-            if CommandLine.arguments.contains("--test-recurring"), env.store.access == .granted {
-                let report = await env.store.diagnoseRecurringCompletion()
-                let url = URL.documentsDirectory.appendingPathComponent("recurrence.txt")
-                try? report.write(to: url, atomically: true, encoding: .utf8)
-            }
-            if CommandLine.arguments.contains("--seed-demo"), env.store.access == .granted {
-                if !env.store.hasSampleData { await env.store.installSampleData() }
-                env.completeSetup()
-            }
-
-            // Verifies the two things the widget extension does that the rest of the app
-            // never exercises: fetching through WidgetDataProvider's bare-EKEventStore
-            // path (no ReminderStore, no MetaStore — a separate process has neither), and
-            // completing a reminder through the exact static function
-            // CompleteTaskIntent.perform() calls, run against its own fresh store the same
-            // way an extension process would, not the app's live one.
-            if CommandLine.arguments.contains("--test-widget"), env.store.access == .granted {
-                let report = await WidgetDiagnostic.run(env: env)
-                let url = URL.documentsDirectory.appendingPathComponent("widget-diagnostic.txt")
-                try? report.write(to: url, atomically: true, encoding: .utf8)
-            }
+#if DEBUG
+            await DebugHooks.runIfRequested(env: env)
+#endif
         }
         .onChange(of: scenePhase) { _, phase in
             // Coming back from Reminders or another device's edit should not need a pull
