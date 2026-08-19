@@ -16,6 +16,26 @@ public enum WidgetDataProvider {
         EKEventStore.authorizationStatus(for: .reminder)
     }
 
+    /// Requests Reminders access, returning whether it ended up granted.
+    ///
+    /// A widget extension must never call this — it cannot present a prompt — but the
+    /// Watch app must. watchOS apps carry their own TCC grant rather than inheriting the
+    /// paired iPhone's, and there is no watchOS Settings pane to grant it after the fact,
+    /// so an app that only *checks* the status can leave the user permanently locked out.
+    @discardableResult
+    public static func requestAccess() async -> Bool {
+        switch authorizationStatus() {
+        case .fullAccess:
+            return true
+        case .notDetermined:
+            return (try? await EKEventStore().requestFullAccessToReminders()) ?? false
+        default:
+            // Denied or restricted: asking again does nothing, the system will not
+            // re-prompt.
+            return false
+        }
+    }
+
     /// Everything incomplete, mapped and sorted the same way `MobileEnvironment.tasks`
     /// does: priority first, then day. Neutral rank (0) throughout, since the widget has
     /// no manual ordering to honour — the phone app itself doesn't either.

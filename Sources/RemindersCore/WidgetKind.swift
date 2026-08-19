@@ -6,4 +6,7 @@ import Foundation
 public enum WidgetKind {
     public static let today = "TodayWidget"
     public static let nextUp = "NextUpWidget"
+    /// The watch-face complication. Registered by the watchOS widget extension and
+    /// reloaded by the watch app and the iPhone-side Watch bridge.
+    public static let watchToday = "WatchTodayComplication"
 }

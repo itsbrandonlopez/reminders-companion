@@ -52,15 +52,9 @@ struct WatchProvider: TimelineProvider {
     }
 }
 
-/// `TimelineProvider`'s completion handlers predate strict concurrency; boxing one to
-/// cross into a `Task` mirrors what the iOS widget already does.
-struct SendableCompletion<T>: @unchecked Sendable {
-    let run: (T) -> Void
-}
-
 struct WatchTodayComplication: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "WatchTodayComplication", provider: WatchProvider()) { entry in
+        StaticConfiguration(kind: WidgetKind.watchToday, provider: WatchProvider()) { entry in
             WatchComplicationView(entry: entry)
                 .containerBackground(.clear, for: .widget)
         }

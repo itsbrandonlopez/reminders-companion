@@ -11,37 +11,53 @@ import Foundation
 /// genuinely watch-specific logic — is unit-testable. A watchOS simulator has an empty
 /// Reminders database that nothing can seed, so it cannot be verified on-device.
 public struct OptimisticCompletions: Equatable, Sendable {
-    private var pending: Set<String> = []
+    /// How long a tap may stay unconfirmed before the row is shown again.
+    ///
+    /// Without an expiry, "still present in the fetch" is indistinguishable between *the
+    /// write has not arrived yet* and *the write is never going to arrive*, and a
+    /// completion that genuinely failed would hide its row for the rest of the session
+    /// with no retry. Ten minutes is comfortably longer than a normal queued delivery and
+    /// short enough that a lost request comes back while the user still remembers it.
+    public static let expiry: TimeInterval = 600
+
+    private var pending: [String: Date] = [:]
 
     public init() {}
 
     public var isEmpty: Bool { pending.isEmpty }
     public var count: Int { pending.count }
 
-    public mutating func markCompleted(_ taskID: String) {
-        pending.insert(taskID)
+    public mutating func markCompleted(_ taskID: String, at now: Date = .now) {
+        pending[taskID] = now
     }
 
-    public func hides(_ taskID: String) -> Bool { pending.contains(taskID) }
+    public func hides(_ taskID: String, at now: Date = .now) -> Bool {
+        guard let markedAt = pending[taskID] else { return false }
+        return now.timeIntervalSince(markedAt) < Self.expiry
+    }
 
     /// Filters a freshly fetched list down to what the user should still see.
-    public func visible(in tasks: [TaskItem]) -> [TaskItem] {
-        tasks.filter { !pending.contains($0.id) }
+    public func visible(in tasks: [TaskItem], at now: Date = .now) -> [TaskItem] {
+        tasks.filter { !hides($0.id, at: now) }
     }
 
-    /// Drops entries the server has caught up on.
+    /// Drops entries that are finished with, in either direction.
     ///
-    /// A task still present in a fresh fetch is still incomplete, so it stays hidden. One
-    /// that has *left* the fetch is genuinely done and no longer needs suppressing —
-    /// keeping it would leak memory and, worse, permanently hide the task if it were ever
-    /// un-completed elsewhere.
-    public mutating func reconcile(against freshTasks: [TaskItem]) {
-        pending.formIntersection(Set(freshTasks.map(\.id)))
+    /// A task that has *left* the fetch is genuinely completed, so its entry is dead weight
+    /// — and keeping it would permanently hide the task if it were ever un-completed
+    /// elsewhere. A task still in the fetch is normally just awaiting the write, so it
+    /// stays hidden — but only until `expiry`, after which the request is presumed lost and
+    /// the row returns so it can be tapped again.
+    public mutating func reconcile(against freshTasks: [TaskItem], at now: Date = .now) {
+        let live = Set(freshTasks.map(\.id))
+        pending = pending.filter { id, markedAt in
+            live.contains(id) && now.timeIntervalSince(markedAt) < Self.expiry
+        }
     }
 
     /// Clears a single entry, for when a request is known to have failed and the row
-    /// should come back rather than stay invisible.
+    /// should come back immediately rather than waiting out the expiry.
     public mutating func restore(_ taskID: String) {
-        pending.remove(taskID)
+        pending.removeValue(forKey: taskID)
     }
 }

@@ -8,6 +8,15 @@ import WidgetKit
 struct RemindersCompanionMobileApp: App {
     @State private var env = MobileEnvironment()
 
+    init() {
+        // Deliberately here rather than in a view's `.task`. iOS delivers a queued
+        // `transferUserInfo` by launching this app in the background, where a WindowGroup's
+        // content may never appear — so a view-driven setup would leave the session
+        // inactive and the handler unset at exactly the moment the Watch's queued
+        // completion arrives. That queued path is the whole point of the feature.
+        WatchBridge.shared.activate()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -72,7 +81,9 @@ extension RootView {
     /// `CompleteTaskIntent` calls — so the Watch, the widget and the app all complete a
     /// task through one code path rather than three that can drift.
     func startWatchBridge() {
-        WatchBridge.shared.onCompleteRequest = { taskID in
+        // `setCompleteHandler` drains anything that arrived before the scene appeared,
+        // which is the normal case for a background launch.
+        WatchBridge.shared.setCompleteHandler { taskID in
             Task { @MainActor in
                 let store = EKEventStore()
                 _ = try? ReminderStore.completeReminder(externalID: taskID, in: store)
@@ -81,9 +92,10 @@ extension RootView {
                 await env.store.refresh()
                 WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.today)
                 WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.nextUp)
+                // The watch face shows the same counts and is a separate extension.
+                WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.watchToday)
             }
         }
-        WatchBridge.shared.activate()
     }
 }
 

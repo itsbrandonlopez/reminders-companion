@@ -1,9 +1,16 @@
 import RemindersCore
 import RemindersShared
 import SwiftUI
+import WidgetKit
 
 @main
 struct RemindersCompanionWatchApp: App {
+    init() {
+        // Activated up front so the session is ready before the first tap, rather than
+        // racing the view's appearance.
+        WatchBridge.shared.activate()
+    }
+
     var body: some Scene {
         WindowGroup {
             WatchTodayView()
@@ -32,21 +39,35 @@ final class WatchModel {
     var visibleTasks: [TaskItem] { optimistic.visible(in: tasks) }
 
     func load() async {
-        isAuthorized = WidgetDataProvider.authorizationStatus() == .fullAccess
+        // Request rather than merely check: a watch has its own TCC grant, and there is no
+        // Settings pane on the watch to turn it on afterwards. Checking alone would strand
+        // every new user on the unauthorised screen with nothing to tap.
+        isAuthorized = await WidgetDataProvider.requestAccess()
         guard isAuthorized else { isLoading = false; return }
         tasks = await WidgetDataProvider.fetchToday()
         optimistic.reconcile(against: tasks)
         isLoading = false
     }
 
+    /// Re-reads without the full loading state, for coming back to an already-open app.
+    func refresh() async {
+        guard isAuthorized else { return }
+        tasks = await WidgetDataProvider.fetchToday()
+        optimistic.reconcile(against: tasks)
+    }
+
     func complete(_ task: TaskItem) {
         optimistic.markCompleted(task.id)
         WatchBridge.shared.requestComplete(taskID: task.id)
+        // The complication shows a count taken from the same data; without this it keeps
+        // the old number until watchOS happens to refresh on its own budget.
+        WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.watchToday)
     }
 }
 
 struct WatchTodayView: View {
     @State private var model = WatchModel()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack {
@@ -70,8 +91,14 @@ struct WatchTodayView: View {
             .navigationTitle("Today")
         }
         .task {
-            WatchBridge.shared.activate()
             await model.load()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Raising your wrist resumes rather than recreates the app, so `.task` does
+            // not fire again — without this the list is whatever it was at first launch,
+            // and tapping a task already completed elsewhere sends a pointless request.
+            guard phase == .active else { return }
+            Task { await model.refresh() }
         }
     }
 

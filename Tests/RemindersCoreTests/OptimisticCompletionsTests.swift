@@ -74,6 +74,45 @@ final class OptimisticCompletionsTests: XCTestCase {
         XCTAssertFalse(c.hides("a"))
     }
 
+    /// The failure this exists to prevent: a completion that never reaches the phone
+    /// leaves the task incomplete, so it stays in every fetch — and without an expiry the
+    /// row would be hidden for the rest of the session with no way to retry.
+    func testAnUnconfirmedCompletionComesBackAfterTheExpiry() {
+        var c = OptimisticCompletions()
+        let t0 = Date()
+        c.markCompleted("a", at: t0)
+
+        // Still within the window and still in the fetch: correctly hidden.
+        let midway = t0.addingTimeInterval(OptimisticCompletions.expiry / 2)
+        c.reconcile(against: [task("a")], at: midway)
+        XCTAssertTrue(c.hides("a", at: midway))
+
+        // Past the window with the task still incomplete: presumed lost, shown again.
+        let later = t0.addingTimeInterval(OptimisticCompletions.expiry + 1)
+        c.reconcile(against: [task("a")], at: later)
+        XCTAssertFalse(c.hides("a", at: later))
+        XCTAssertEqual(c.visible(in: [task("a")], at: later).map(\.id), ["a"])
+    }
+
+    /// `hides` must expire on its own even if `reconcile` never runs — the watch app can
+    /// sit on one fetch for a long time.
+    func testHidesExpiresWithoutReconciling() {
+        var c = OptimisticCompletions()
+        let t0 = Date()
+        c.markCompleted("a", at: t0)
+        XCTAssertTrue(c.hides("a", at: t0.addingTimeInterval(1)))
+        XCTAssertFalse(c.hides("a", at: t0.addingTimeInterval(OptimisticCompletions.expiry + 1)))
+    }
+
+    func testReMarkingRestartsTheWindow() {
+        var c = OptimisticCompletions()
+        let t0 = Date()
+        c.markCompleted("a", at: t0)
+        let nearlyExpired = t0.addingTimeInterval(OptimisticCompletions.expiry - 1)
+        c.markCompleted("a", at: nearlyExpired)
+        XCTAssertTrue(c.hides("a", at: nearlyExpired.addingTimeInterval(1)))
+    }
+
     func testReconcilingAgainstAnEmptyFetchClearsEverything() {
         var c = OptimisticCompletions()
         c.markCompleted("a")

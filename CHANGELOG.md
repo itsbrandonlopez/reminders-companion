@@ -4,6 +4,46 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Watch audit fixes
+
+An audit of the Watch work found seven issues, two of which would have shipped broken.
+
+### Fixed
+
+- **The Watch app never requested Reminders access**, only checked it. watchOS carries its
+  own TCC grant rather than inheriting the iPhone's, and there is no watchOS Settings pane
+  to grant it afterwards — so every new user would have been stranded on "Allow Reminders
+  access on your iPhone" with nothing anywhere to tap. Verified by resetting the grant and
+  confirming the prompt now appears.
+- **A failed completion hid its row for the whole session.** `reconcile` kept any pending
+  id still present in the fetch, which is exactly what a completion that never reached the
+  phone produces — so the task stayed invisible with no retry. Pending entries now expire
+  after ten minutes and the row returns.
+- **The iPhone set up the Watch bridge from a view's `.task`**, so the receiver only
+  existed once the SwiftUI scene appeared. iOS delivers a queued `transferUserInfo` by
+  launching the app in the *background*, where the scene may never appear — meaning the
+  feature's headline case, completing on a run with the phone at home, could have been
+  dropped entirely. Activation moved to `App.init`, and requests arriving before a handler
+  is installed are now buffered and drained.
+- **Nothing reloaded the watch complication.** Its kind was a bare string literal rather
+  than a `WidgetKind` constant, and no code reloaded it, so the face kept a stale count
+  until watchOS refreshed on its own budget.
+- **The Watch list never refreshed after first appearance** — no `scenePhase` observer, so
+  raising your wrist showed a snapshot from launch and tapping could re-complete something
+  already done elsewhere.
+- Retried sends now carry a **request id** so the phone can recognise a duplicate. Harmless
+  while completion is the only action and idempotent, but the envelope is built to grow and
+  the first non-idempotent action would have executed twice.
+- `SendableCompletion` was duplicated in both widget targets; it now lives once in
+  `RemindersCore`.
+
+### Notes
+
+- The theme was that **the simulator hid the two worst bugs**: its Reminders database is
+  empty and unseedable, so a populated list was never seen (hiding the stale-refresh bug),
+  and access had been pre-granted with `simctl privacy`, so the permission path was never
+  exercised. Building was not the same as running.
+
 ## [Unreleased] — Apple Watch
 
 ### Added
