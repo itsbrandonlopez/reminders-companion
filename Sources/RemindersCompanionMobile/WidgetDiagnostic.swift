@@ -122,7 +122,71 @@ enum WidgetDiagnostic {
             log.append("    \(task.listID == list.id ? "✓ restored" : "✗ not restored")")
         }
 
-        // 4. Undoing must not itself become undoable, or the banner would never clear.
+        // 4. Bulk reschedule: every task must come back to its *own* previous day, not a
+        // shared one, and not stay where the bulk move put them.
+        let dayA = Day.today().adding(days: 3)
+        let dayB = Day.today().adding(days: 6)
+        let bulkStamp = UUID().uuidString.prefix(5)
+        await env.store.create(title: "Bulk A \(bulkStamp)", in: list.id, on: dayA)
+        await env.store.create(title: "Bulk B \(bulkStamp)", in: list.id, on: dayB)
+        await env.store.refresh()
+        let bulk = env.store.tasks.filter { $0.title.hasSuffix(String(bulkStamp)) }
+        if bulk.count == 2 {
+            await env.store.schedule(bulk, to: Day.today())
+            await env.store.refresh()
+            let movedAll = env.store.tasks
+                .filter { $0.title.hasSuffix(String(bulkStamp)) }
+                .allSatisfy { $0.plannedDay == Day.today() }
+            await env.store.undoLast()
+            await env.store.refresh()
+            let restored = env.store.tasks.filter { $0.title.hasSuffix(String(bulkStamp)) }
+            let a = restored.first { $0.title.hasPrefix("Bulk A") }?.plannedDay
+            let b = restored.first { $0.title.hasPrefix("Bulk B") }?.plannedDay
+            log.append("  bulk: both → today (\(movedAll ? "✓" : "✗")) → undo → A=\(a?.description ?? "nil") B=\(b?.description ?? "nil")")
+            log.append("    \(a == dayA && b == dayB ? "✓ each restored to its own day" : "✗ not restored individually")")
+            for t in restored { await env.store.delete(t) }
+        }
+
+        // 5. "Next Up" must be the nearest by date, not the highest priority.
+        let nextStamp = UUID().uuidString.prefix(5)
+        await env.store.create(
+            title: "Soon low \(nextStamp)", in: list.id, on: Day.today().adding(days: 1),
+            priority: .low
+        )
+        await env.store.create(
+            title: "Later high \(nextStamp)", in: list.id, on: Day.today().adding(days: 30),
+            priority: .high
+        )
+        await env.store.refresh()
+        // Asserting the property rather than naming an expected task: the demo data
+        // contains an overdue high-priority item that is *also* the earliest, so a
+        // by-title check would pass under both the old and new ordering and prove nothing.
+        let next = await WidgetDataProvider.fetchNext()
+        let allDated = await WidgetDataProvider.fetchTasks().compactMap(\.boardDay)
+        let earliest = allDated.min()
+        let pickedNearest = next?.boardDay == earliest
+        log.append("  next-up picked: \(next?.title ?? "nil") (\(next?.boardDay?.description ?? "nil"))")
+        log.append("    earliest dated task overall: \(earliest?.description ?? "nil")")
+        log.append("    \(pickedNearest ? "✓ nearest by date" : "✗ not the earliest — still ordering by priority")")
+
+        // And the discriminating case in isolation: among two tasks where date and
+        // priority disagree, date must win.
+        let soon = env.store.tasks.first { $0.title.hasPrefix("Soon low") }
+        let later = env.store.tasks.first { $0.title.hasPrefix("Later high") }
+        if let soon, let later {
+            let ordered = [later, soon].sorted { l, r in
+                let a = l.boardDay ?? .today(), b = r.boardDay ?? .today()
+                if a != b { return a < b }
+                return l.priority.sortWeight < r.priority.sortWeight
+            }
+            let dateWins = ordered.first?.title.hasPrefix("Soon low") == true
+            log.append("    date beats priority when they disagree: \(dateWins ? "✓" : "✗")")
+        }
+        for t in env.store.tasks.filter({ $0.title.hasSuffix(String(nextStamp)) }) {
+            await env.store.delete(t)
+        }
+
+        // 6. Undoing must not itself become undoable, or the banner would never clear.
         let slotAfterUndo = env.store.undoable == nil
         log.append("  undo slot cleared after undoing: \(slotAfterUndo ? "✓" : "✗ would loop")")
 

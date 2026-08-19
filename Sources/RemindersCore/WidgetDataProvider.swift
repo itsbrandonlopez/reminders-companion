@@ -43,19 +43,32 @@ public enum WidgetDataProvider {
             }
     }
 
-    /// Today's dated work — planned, due, or overdue — same rule as the phone app's Today
-    /// tab and widget's own "Today" kind.
+    /// Today's work, using the *same* rule as the app's Today tab: a task belongs to the
+    /// day its `boardDay` names, and anything older is triage rather than today.
+    ///
+    /// Previously this also swept in every overdue task, which meant the widget's count
+    /// and the app's Today tab openly disagreed on the same screen. Overdue work is
+    /// surfaced separately via `overdueCount()`, exactly as the app surfaces it as a
+    /// "N past due" banner.
     public static func fetchToday() async -> [TaskItem] {
         let today = Day.today()
-        return await fetchTasks().filter { task in
-            guard let span = task.span else { return false }
-            return span.contains(today) || task.isOverdue()
-        }
+        return await fetchTasks().filter { $0.boardDay == today }
     }
 
-    /// The single next dated task, for the "Next Up" widget.
+    /// The next dated task by **date**, for the "Next Up" widget.
+    ///
+    /// Deliberately re-sorted rather than reusing `fetchTasks()`'s order, which puts
+    /// priority first: a high-priority task due next month is not "next up" over a
+    /// low-priority one due today. Priority breaks ties on the same day.
     public static func fetchNext() async -> TaskItem? {
-        await fetchTasks().first { $0.boardDay != nil }
+        await fetchTasks()
+            .filter { $0.boardDay != nil }
+            .min { lhs, rhs in
+                let l = lhs.boardDay ?? .today()
+                let r = rhs.boardDay ?? .today()
+                if l != r { return l < r }
+                return lhs.priority.sortWeight < rhs.priority.sortWeight
+            }
     }
 
     public static func overdueCount() async -> Int {

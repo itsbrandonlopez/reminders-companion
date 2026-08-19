@@ -350,8 +350,14 @@ public final class ReminderStore {
     public func schedule(_ batch: [TaskItem], to day: Day?) async {
         guard !batch.isEmpty else { return }
         var failed = 0
+        // Captured before writing, so undo can put every task back on its own day rather
+        // than on one shared day. This is the app's most far-reaching action; it needs a
+        // way back at least as much as a single drag does.
+        var previous: [PreviousSchedule] = []
+
         for task in batch {
             guard let reminder = liveReminder(for: task) else { failed += 1; continue }
+            previous.append(PreviousSchedule(task: task, previousDay: task.plannedDay))
             if let day {
                 reminder.startDateComponents = Scheduling.plannedComponents(
                     for: day, alongside: reminder.dueDateComponents
@@ -361,25 +367,36 @@ public final class ReminderStore {
             }
             do { try store.save(reminder, commit: false) } catch { failed += 1 }
         }
+
+        var commitFailed = false
         do {
             markLocalWrite()
             try store.commit()
         } catch {
+            commitFailed = true
+            // A failed commit means nothing was written at all, which is a different and
+            // more important story than "some tasks could not be resolved" — so it wins
+            // rather than being overwritten by the count below.
             lastError = "Could not reschedule: \(error.localizedDescription)"
         }
-        if failed > 0 {
+        if !commitFailed, failed > 0 {
             lastError = "\(failed) task\(failed == 1 ? "" : "s") could not be rescheduled."
+        }
+        if !commitFailed, !previous.isEmpty {
+            undoable = .bulkReschedule(items: previous)
         }
         await refresh()
     }
 
     /// Clears the deadline end of a span, leaving the task planned for a single day.
     public func clearSpanEnd(_ task: TaskItem) async {
+        let previous = task.dueDay
         await mutate(task) { $0.dueDateComponents = nil }
+        if previous != nil {
+            undoable = .deadline(task: task, previousDue: previous)
+        }
     }
 
-    /// The task most recently ticked off, retained so it can be un-ticked.
-    ///
     /// The last reversible edit, or nil when there is nothing to undo.
     ///
     /// Completed reminders vanish from `tasks` — the only fetch is
@@ -408,7 +425,29 @@ public final class ReminderStore {
             await performMove(task, toList: previousListID, recordUndo: false)
         case let .complete(task):
             await mutate(task) { $0.isCompleted = false }
+        case let .bulkReschedule(items):
+            await restore(items)
         }
+    }
+
+    /// Puts a batch of tasks back on their individual previous days, in one commit.
+    private func restore(_ items: [PreviousSchedule]) async {
+        for item in items {
+            guard let reminder = liveReminder(for: item.task) else { continue }
+            if let day = item.previousDay {
+                reminder.startDateComponents = Scheduling.plannedComponents(
+                    for: day, alongside: reminder.dueDateComponents
+                )
+            } else {
+                reminder.startDateComponents = nil
+            }
+            try? store.save(reminder, commit: false)
+        }
+        markLocalWrite()
+        do { try store.commit() } catch {
+            lastError = "Could not undo: \(error.localizedDescription)"
+        }
+        await refresh()
     }
 
     public func dismissUndo() { undoable = nil }
@@ -475,6 +514,9 @@ public final class ReminderStore {
         do {
             markLocalWrite()
             try store.remove(reminder, commit: true)
+            // A pending undo that points at this task can no longer be carried out, and
+            // offering it would only produce "no longer in Reminders" when tapped.
+            if undoable?.involves(task.id) == true { undoable = nil }
             await refresh()
         } catch {
             lastError = "Could not delete “\(task.title)”: \(error.localizedDescription)"

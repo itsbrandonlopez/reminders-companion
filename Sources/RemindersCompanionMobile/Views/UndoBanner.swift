@@ -18,10 +18,12 @@ struct UndoBanner: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(action.label)
                     .font(.system(size: 13, weight: .medium))
-                Text(action.task.title)
-                    .font(.system(size: 12))
-                    .opacity(0.75)
-                    .lineLimit(1)
+                if let subtitle = action.subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .opacity(0.75)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 8)
             Button("Undo", action: onUndo)
@@ -39,6 +41,11 @@ struct UndoBanner: View {
         .transition(.move(edge: .bottom).combined(with: .opacity))
         .task {
             try? await Task.sleep(for: .seconds(6))
+            // `try?` swallows the CancellationError, so without this guard a banner
+            // replaced by a newer action would run on and dismiss that newer action's
+            // undo slot almost immediately — breaking undo during exactly the rapid
+            // editing where it matters most.
+            guard !Task.isCancelled else { return }
             onDismiss()
         }
     }

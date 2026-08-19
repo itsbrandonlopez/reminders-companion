@@ -4,6 +4,46 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Audit fixes
+
+A full review of the ~7,200 lines added since 1.0.0 turned up eight issues, all fixed.
+
+### Fixed
+
+- **Undo silently stopped working during rapid editing.** The iPhone banner's
+  auto-dismiss used `try? await Task.sleep` and then dismissed unconditionally — but
+  `try?` swallows cancellation, so when a second edit replaced the banner the cancelled
+  timer ran on and cleared the *new* action's undo slot almost immediately. Confirmed
+  empirically before fixing.
+- **"Move All to Today" had no undo** — the app's most far-reaching action was the only
+  one that couldn't be reversed. The bulk path now records every task's own prior day and
+  restores them individually, not to one shared day.
+- **The "Next Up" widget showed the highest-priority task, not the nearest.** It took the
+  first item from a priority-sorted list, so a high-priority task due next month beat a
+  low-priority one due today. Now ordered by date, with priority breaking same-day ties.
+- **The Today widget and the Today tab disagreed on screen.** The widget swept in every
+  overdue task while the app routes those to Triage, so the two counts contradicted each
+  other. The widget now uses the app's exact rule; overdue stays a separate badge.
+- **Clearing a deadline had no undo**, while editing the same field in the detail panel
+  did — so the destructive route was the unprotected one.
+- **Deleting a task left a stale undo offer** that could only fail with "no longer in
+  Reminders" when tapped. Deleting now retires an undo that refers to it, including one
+  buried inside a bulk batch.
+- A failed bulk commit had its error overwritten by the per-task failure count, hiding the
+  fact that nothing was written at all.
+- Fixed a doc comment left claiming the undo slot was both completion-specific and general.
+
+### Notes
+
+- The through-line was **inconsistent undo coverage**: four mutation paths recorded it and
+  four didn't, and the gaps were the destructive ones. Every mutation now either records
+  undo or is explicitly a no-op for it.
+- Verified against live EventKit rather than a green build, which is what caught the last
+  regression: bulk undo restores each task to its own day, and "Next Up" is asserted as a
+  *property* (it equals the earliest dated task) rather than by expected title — the demo
+  data's overdue high-priority item would have passed a naive check under both the old and
+  new ordering.
+
 ## [Unreleased] — Undo
 
 ### Added

@@ -131,7 +131,8 @@ struct ContentView: View {
     private func undoBanner(for action: UndoableAction) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.uturn.backward.circle.fill").font(.system(size: 11))
-            Text("\(action.label) “\(action.task.title)”")
+            // A bulk move has no single title to name, so the label carries it alone.
+            Text(action.subtitle.map { "\(action.label) “\($0)”" } ?? action.label)
                 .font(.system(size: 11.5)).lineLimit(1)
             Spacer()
             Button("Undo") { Task { await env.store.undoLast() } }
