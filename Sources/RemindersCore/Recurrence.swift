@@ -91,13 +91,6 @@ extension RecurrenceFrequency {
     }
 }
 
-extension Day {
-    var monthDayYear: String {
-        let f = DateFormatter(); f.dateFormat = "d MMM yyyy"
-        return f.string(from: startOfDay())
-    }
-}
-
 /// What kind of alarm a reminder carries.
 ///
 /// Absolute and relative alarms are fully expressible here. A location alarm is a geofence
@@ -118,9 +111,7 @@ public enum AlarmShape: Hashable, Sendable {
     public var label: String {
         switch self {
         case let .absolute(date):
-            let f = DateFormatter()
-            f.dateFormat = "d MMM, h:mm a"
-            return f.string(from: date)
+            return DateLabels.monthDayTime.string(from: date)
         case let .relative(offset):
             let minutes = Int(abs(offset) / 60)
             if minutes == 0 { return "At the due time" }

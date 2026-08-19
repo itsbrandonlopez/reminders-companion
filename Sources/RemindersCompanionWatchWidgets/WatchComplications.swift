@@ -43,11 +43,16 @@ struct WatchProvider: TimelineProvider {
         guard WidgetDataProvider.authorizationStatus() == .fullAccess else {
             return WatchEntry(date: .now, todayCount: 0, overdueCount: 0, next: nil)
         }
+        // One fetch, not three. Each of the granular calls builds its own `EKEventStore`
+        // and reads the whole database, so assembling this entry from them did that work
+        // three times over — in a watchOS complication process, which has the tightest
+        // memory and time budget of anything in this app.
+        let snapshot = await WidgetDataProvider.snapshot()
         return WatchEntry(
             date: .now,
-            todayCount: await WidgetDataProvider.fetchToday().count,
-            overdueCount: await WidgetDataProvider.overdueCount(),
-            next: await WidgetDataProvider.fetchNext()
+            todayCount: snapshot.today.count,
+            overdueCount: snapshot.overdueCount,
+            next: snapshot.next
         )
     }
 }

@@ -4,14 +4,16 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-Not yet versioned — pending review.
+## [1.3.0] — 2026-08-19
 
 Since 1.2.1 this has grown from a single Mac app into four surfaces sharing one core: the
 Mac app, an iPhone companion, Home/Lock Screen widgets, and an Apple Watch app with
-complications. Along the way: quick-add shorthand, undo, fuller task details, and two
+complications. Along the way: quick-add shorthand, undo, fuller task details, and three
 rounds of audit fixes.
+
+Bundle versions are aligned with the tag from this release on. Before it the Mac app
+reported `0.1` and the iOS and watchOS targets `1.0`, none of which matched the repository's
+own tags — so anyone reading About on the Mac app saw a number three releases behind.
 
 ### Added
 
@@ -126,6 +128,107 @@ banner on iPhone. Deliberately one step, not a stack.
 - A patch dropped `satisfyStartDateRequirement` from `setDueDay`, silently regressing that
   same fix. Caught by extending the live-EventKit diagnostic rather than trusting a build.
 
+### Fixed — third audit pass
+
+**A geofence alarm could be destroyed by an ordinary edit.** `setAlarm` and `setRecurrence`
+guarded against clobbering things this app cannot rebuild, but they read the caller's
+`TaskItem` — a snapshot taken whenever the view last refetched, which every detail panel
+holds open for as long as it is on screen. Add a location alert on another device, edit the
+notification here, and the guard passed on stale empty alarms while the write cleared the
+live reminder's. Guards now run inside `mutate`, against the same `EKReminder` the save
+touches, via a `throws` closure and a `Refusal` error. The same staleness made
+`setRecurrence` both refuse valid edits and let a rule through to a reminder with no
+deadline — where EventKit accepts it and silently discards it on save.
+
+This is the finding that mattered most, because it made cross-cutting invariant #3
+("enforced in the store, not just the UI, so no future caller can route around it") untrue
+as written: any caller routed around it simply by holding a value type for a few seconds.
+
+**Undo recorded the wrong "previous" value, for the same reason.** Every undo entry took the
+field's prior value from the caller's `TaskItem`, so two edits to one field from a single
+open detail panel both recorded the *original* value — undoing the second jumped past the
+first rather than reversing it. All five recording sites now read the live reminder before
+writing. They also honour whether the save landed: a refused or failed edit previously still
+posted an undo banner offering to overwrite the current value with a stale one.
+
+**External changes could be missed indefinitely.** The echo suppression around
+`EKEventStoreChanged` *dropped* any notification arriving within a second of a local write.
+That notification is never redelivered, so an iCloud push landing just after you ticked
+something off was lost outright, not merely late. It now backs off to a longer debounce
+instead of skipping.
+
+**Concurrent refreshes could publish stale data.** `refresh()` is `@MainActor` but not
+serialized — `await fetch` is a suspension point — so an older snapshot could overwrite a
+newer one depending on which EventKit callback returned last, and the first one to finish
+cleared the spinner for all of them. A generation counter now discards overtaken runs.
+
+**The iOS Today widget's overdue count was wrong.** It filtered *today's* tasks for overdue
+items, which finds only tasks explicitly re-planned for today that still carry a past
+deadline — so it showed "0 overdue" beside a backlog of thirty, while the watch face, using
+`overdueCount()`, showed the real figure.
+
+**Backlog and Overdue were two different sets sharing one name and one control.** The Week
+board's backlog is work that slipped past the *whole* current week; the Today board's was
+everything whose day has gone. Both rules are right for their board — but they were both
+labelled BACKLOG and governed by one sort preference documented as answering "the same
+question". They are now named apart, with `AppEnvironment.overdue` alongside `backlog` and a
+sort control each. The phone's `pastDueCount` became `backlogCount`, since it counts the
+backlog pile and not past deadlines.
+
+**`#423` was eaten out of task titles.** Any `#token` was treated as a list name, so "Fix
+login bug #423" became "Fix login bug" filed in the default list. A token now has to contain
+a letter — the same "a wrong guess is worse than no guess" rule the date parser already
+applied, and which this violated.
+
+**Times ignored the 24-hour clock.** Ten `DateFormatter()`s with hardcoded patterns
+(`"h:mm a"`, `"MMM d"`) across five files rendered 13:30 as "1:30 PM" regardless of region,
+and each was constructed inside a computed property called from a SwiftUI body. They are now
+locale templates built once in `RemindersCore.DateLabels`. Times consequently render with
+the narrow no-break space before AM/PM that CLDR specifies and the system's own apps use.
+
+### Changed — scalability
+
+Behaviour is identical; the cost is not. Everything here was invisible at 50 reminders and
+dominant at 10,000.
+
+- **`MetaStore` lookups were one predicate fetch per task.** `refresh()` did *n* round trips
+  into SwiftData, and `applyLocalRanks()` did *n* more on the drag path whose entire purpose
+  is to feel instant. Both take an index once now, and a column respread is a single
+  transaction rather than a fetch plus a save per card.
+- **The phone kept a sidecar it never read.** The comment claimed an in-memory store; the
+  code opened a persistent one and reconciled a row per reminder on every refresh, for
+  manual order and estimates the phone does not show. `ReminderStore`'s sidecar is now
+  optional and the phone passes none.
+- **Derived slices are computed once per change, not per access.** `filteredTasks`,
+  `backlog`, `tasks(on:)` and the sidebar counts each recomputed from `store.tasks` on every
+  read, and SwiftUI reads them repeatedly — a week board render came to roughly 95 full
+  traversals and 40 sorts of the whole array. They are cached behind a key naming everything
+  they depend on. Measured on device: 19 slice reads, 1 rebuild.
+- **Widgets and complications fetch once per entry.** The watch complication built three
+  `EKEventStore`s and read the whole database three times to produce two integers and a
+  task — in the tightest memory and time budget in the system. `WidgetDataProvider.snapshot()`
+  does it in one.
+- Committing a task's text is one write. The detail panel spawned three detached `Task`s for
+  title, notes and URL, giving three commits and three full refetches per "Done", in no
+  guaranteed order.
+
+### Fixed — tests that could not fail
+
+- **`WatchRequestTests` tested a copy of the code.** It re-declared the wire keys and
+  re-implemented `parse`, on the grounds that `WatchRequest` lived in an iOS/watchOS-only
+  module — so renaming `completeAction` or swapping two keys left all six tests green while
+  the Watch silently stopped being able to complete anything. `WatchRequest` is pure
+  Foundation and now lives in `RemindersCore`; the tests call it, and pin the wire format
+  explicitly.
+- **The respread test asserted arithmetic, not behaviour.** It computed
+  `(staleAbove + staleBelow) / 2` by hand and checked where that landed — a fact about two
+  literals, true no matter what the respread path did. The path itself, including the
+  fresh-neighbour re-read its comment called the whole point, had no coverage. It is now
+  `Ranking.respread`, a pure function, tested directly.
+- The `--selftest` "create" check passed a literal `true`. The diagnostic's "repeat with no
+  deadline" line had no failure branch and conflated *the store refused* with *EventKit
+  discarded it silently* — the one distinction that whole layer exists to draw.
+
 ### Verified against live EventKit
 
 Each of these was run against real data rather than inferred from a passing build.
@@ -141,6 +244,23 @@ Each of these was run against real data rather than inferred from a passing buil
 - All four undo paths restore correctly, and bulk undo returns each task to its *own* day.
 - Widget completion persists through a fresh `EKEventStore`, mirroring how an extension
   process actually runs.
+- **A stale snapshot cannot destroy a geofence.** The probe writes a location alert behind a
+  held `TaskItem`'s back through a second store, then edits from that snapshot, and checks
+  from a third store that the geofence survived. Confirmed to *fail* against the pre-fix
+  code, so it discriminates rather than merely passing.
+- **Unscheduling a task that has a deadline saves, and it renders on its deadline** — the
+  one scheduling gesture the Mac's `--selftest` structurally cannot cover.
+
+### EventKit documentation that does not match observed behaviour
+
+- **`EKErrorNoStartDate` did not reproduce.** `EKReminder`'s header states that iOS rejects
+  a due date with no start date and that macOS does not. Driven against a live store on
+  iOS 26, that save is **accepted** and the reminder reads back with `startDateComponents
+  == nil`. Trusting the header would mean inventing a start date on every unschedule, and so
+  storing different data on iPhone than the Mac stores for the identical gesture. Trusting
+  the observation would mean breaking on any OS that does enforce it. The app writes what
+  the user asked for and `saveRepairingStartDate` supplies a start date only for a save that
+  actually comes back refused; the diagnostic prints which branch the platform took.
 
 ### EventKit behaviour worth knowing
 
@@ -303,6 +423,7 @@ source of truth.
 - macOS only. The domain logic is UI-free and platform-agnostic, so an iPhone app and
   widget can be added without rework.
 
+[1.3.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.3.0
 [1.2.1]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.2.1
 [1.2.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.2.0
 [1.1.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.1.0

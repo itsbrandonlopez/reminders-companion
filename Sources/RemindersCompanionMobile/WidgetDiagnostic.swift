@@ -1,4 +1,5 @@
 #if DEBUG
+import CoreLocation
 import EventKit
 import RemindersCore
 import Foundation
@@ -142,8 +143,18 @@ enum WidgetDiagnostic {
 
         // Repeat round trip. A repeat rule is anchored to the *due* date — the earlier
         // recurrence diagnostic that worked set one first — so this checks both states.
-        await env.store.setRecurrence(p, SimpleRecurrence(frequency: .weekly, interval: 2)); reload()
-        log.append("  repeat with no deadline: \(p.recurrence == nil ? "correctly refused/dropped" : "accepted")")
+        // Two outcomes this must tell apart, which the old wording ("refused/dropped")
+        // conflated: the store refusing up front, versus EventKit accepting the rule in
+        // memory and silently discarding it on save. Only the first is a working guard —
+        // and the return value is the only thing that distinguishes them.
+        let refusedNoDeadline = await env.store.setRecurrence(
+            p, SimpleRecurrence(frequency: .weekly, interval: 2)
+        ) == false
+        reload()
+        log.append("  repeat with no deadline: refused=\(refusedNoDeadline) ruleAbsent=\(p.recurrence == nil)  " +
+            (refusedNoDeadline && p.recurrence == nil
+                ? "✓ refused up front"
+                : "✗ the store let it through — EventKit dropped it silently"))
 
         await env.store.setDueDay(p, to: Day.today().adding(days: 1)); reload()
         await env.store.setRecurrence(p, SimpleRecurrence(frequency: .weekly, interval: 2)); reload()
@@ -186,6 +197,113 @@ enum WidgetDiagnostic {
                 (detected && refused && intact ? "✓ not clobbered" : "✗ GUARD FAILED")
         }
         log.append("  'every 2nd Tuesday': \(guardResult)")
+
+        // The stale-snapshot guard. `setAlarm` clears every alarm before writing a new
+        // one, so its "is any of these a geofence?" check has to read the *live* reminder:
+        // a snapshot captured before a geofence arrived from another device would pass the
+        // check and the write would delete a geofence this app cannot rebuild.
+        //
+        // Reproduced exactly: hold a snapshot, add a geofence behind its back, then edit
+        // from the snapshot.
+        let stale = p                                   // captured with no alarms
+        let geo = EKEventStore()
+        var staleResult = "could not seed a geofence alarm"
+        if (try? await geo.requestFullAccessToReminders()) == true,
+           let live = geo.calendarItems(withExternalIdentifier: p.id)
+               .compactMap({ $0 as? EKReminder }).first {
+            let alarm = EKAlarm()
+            let place = EKStructuredLocation(title: "Studio")
+            place.geoLocation = CLLocation(latitude: 37.3349, longitude: -122.0090)
+            place.radius = 100
+            alarm.structuredLocation = place
+            alarm.proximity = .enter
+            live.addAlarm(alarm)
+
+            if (try? geo.save(live, commit: true)) != nil {
+                await env.store.refresh()
+                let seeded = env.store.tasks.first { $0.id == p.id }
+                let geofencePresent = seeded?.alarms.contains { !$0.isEditableHere } == true
+
+                if geofencePresent {
+                    // `stale` still reports no alarms. The guard must refuse anyway.
+                    let refused = await env.store.setAlarm(stale, at: Date().addingTimeInterval(3600)) == false
+
+                    // Verify from an independent store that the geofence really survived,
+                    // rather than trusting the in-memory value.
+                    let verify = EKEventStore()
+                    _ = try? await verify.requestFullAccessToReminders()
+                    // Checked against raw EventKit rather than our own `alarmShape`, so a
+                    // bug in the mapping cannot make this read as a pass.
+                    let survived = verify.calendarItems(withExternalIdentifier: p.id)
+                        .compactMap { $0 as? EKReminder }
+                        .first
+                        .map { ($0.alarms ?? []) }?
+                        .contains { $0.structuredLocation != nil && $0.proximity != .none } == true
+
+                    staleResult = "staleSnapshotSawNoAlarms=\(stale.alarms.isEmpty) refused=\(refused) geofenceSurvived=\(survived)  " +
+                        (refused && survived ? "✓ not clobbered" : "✗ GUARD FAILED — a geofence was destroyed")
+                } else {
+                    staleResult = "geofence did not persist on this platform — guard untested"
+                }
+            }
+        }
+        log.append("  stale-snapshot alarm guard: \(staleResult)")
+
+        await env.store.delete(p)
+        log.append("")
+        log.append(await unscheduleChecks(env: env))
+        return log.joined(separator: "\n")
+    }
+
+    /// Removing the planned day from a task that *has* a deadline — the one scheduling
+    /// gesture that can only be verified here.
+    ///
+    /// `EKReminder`'s header states that iOS refuses to save a due date with no start date
+    /// (`EKErrorNoStartDate`) and that macOS does not. This probe exists to check that
+    /// claim rather than trust it, because the Mac's `--selftest` runs the same gesture
+    /// against a task with *no* deadline, on the platform the rule doesn't apply to — so it
+    /// passes there under both a correct and a broken build. The report prints what the
+    /// platform actually did, so a future iOS that starts enforcing the rule shows up here
+    /// as a changed line rather than as a silent failure in the field.
+    private static func unscheduleChecks(env: MobileEnvironment) async -> String {
+        var log = ["── Unschedule diagnostic ──"]
+        guard let list = env.store.lists.first(where: { $0.title == ReminderStore.sampleListName })
+                ?? env.store.lists.first(where: \.isEditable) else { return "  ✗ no editable list" }
+
+        let title = "Unschedule probe \(UUID().uuidString.prefix(6))"
+        let deadline = Day.today().adding(days: 4)
+        await env.store.create(title: title, in: list.id, on: .today(), due: deadline)
+        await env.store.refresh()
+        guard var p = env.store.tasks.first(where: { $0.title == title }) else {
+            return "  ✗ could not create the probe"
+        }
+        func reload() { p = env.store.tasks.first { $0.id == p.id } ?? p }
+
+        log.append("  before: planned=\(p.plannedDay?.description ?? "nil") due=\(p.dueDay?.description ?? "nil")")
+
+        env.store.clearError()
+        await env.store.schedule(p, to: nil)
+        reload()
+
+        // Three things have to hold: the save didn't error, the task is still there, and
+        // it still sits on its deadline's day rather than vanishing off the board.
+        let noError = env.store.lastError == nil
+        let stillPresent = env.store.tasks.contains { $0.id == p.id }
+        let onDeadline = p.boardDay == deadline
+        let spanIntact = !p.spansMultipleDays && p.dueDay == deadline
+
+        log.append("  after : planned=\(p.plannedDay?.description ?? "nil") due=\(p.dueDay?.description ?? "nil") boardDay=\(p.boardDay?.description ?? "nil")")
+        if let error = env.store.lastError { log.append("  error : \(error)") }
+        // Which branch the platform took. `nil` means iOS accepted a due date with no start
+        // date, contradicting the header; a start date equal to the deadline means the save
+        // was refused and `saveRepairingStartDate` supplied one.
+        log.append(p.plannedDay == nil
+            ? "  note  : this iOS accepted due-without-start — no start date was invented"
+            : "  note  : this iOS enforced EKErrorNoStartDate — start repaired to the deadline")
+        log.append("  ▸ VERDICT")
+        log.append(noError && stillPresent && onDeadline && spanIntact
+            ? "    ✓ SAFE — unscheduling a task with a deadline saved, and it renders on its deadline."
+            : "    ✗ UNSAFE — saved=\(noError) present=\(stillPresent) onDeadline=\(onDeadline) span=\(spanIntact)")
 
         await env.store.delete(p)
         return log.joined(separator: "\n")
@@ -304,6 +422,37 @@ enum WidgetDiagnostic {
         // 6. Undoing must not itself become undoable, or the banner would never clear.
         let slotAfterUndo = env.store.undoable == nil
         log.append("  undo slot cleared after undoing: \(slotAfterUndo ? "✓" : "✗ would loop")")
+
+        // 7. Undo must restore the value the field held *immediately* before the edit, not
+        // the value it held when the caller last refetched.
+        //
+        // A detail panel holds one `TaskItem` for as long as it is open and edits from it
+        // repeatedly, so two writes to the same field from one snapshot is the ordinary
+        // case — and the only one that tells a live read apart from a stale one. Recording
+        // from the snapshot makes both edits claim the *original* value, so undoing the
+        // second jumps past the first instead of reversing it.
+        let stampS = UUID().uuidString.prefix(5)
+        let firstDeadline = Day.today().adding(days: 10)
+        let secondDeadline = Day.today().adding(days: 20)
+        await env.store.create(title: "Stale probe \(stampS)", in: list.id, on: Day.today())
+        await env.store.refresh()
+        if let held = env.store.tasks.first(where: { $0.title == "Stale probe \(stampS)" }) {
+            // `held` is captured once and deliberately never reloaded — that is the point.
+            await env.store.setDueDay(held, to: firstDeadline)
+            await env.store.setDueDay(held, to: secondDeadline)
+            await env.store.undoLast()
+            let after = env.store.tasks.first { $0.id == held.id }?.dueDay
+
+            log.append("  stale-snapshot undo: held snapshot due=\(held.dueDay?.description ?? "nil"), " +
+                       "set \(firstDeadline) then \(secondDeadline), undo → \(after?.description ?? "nil")")
+            log.append(after == firstDeadline
+                ? "    ✓ reversed the second edit, landing on the first"
+                : "    ✗ undo used the stale snapshot — jumped past the intermediate value")
+
+            if let live = env.store.tasks.first(where: { $0.id == held.id }) {
+                await env.store.delete(live)
+            }
+        }
 
         await env.store.delete(task)
         return log.joined(separator: "\n")

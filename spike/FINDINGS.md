@@ -54,7 +54,7 @@ after  → due: 2026-08-20 09:00:00 tz=America/New_York   ← preserved
          start: 2026-08-19 00:00:00 tz=America/New_York
 ```
 
-This rule lives in `Scheduling.plannedDayComponents(for:on:)` and is covered by unit tests.
+This rule lives in `Scheduling.plannedComponents(for:alongside:)` and is covered by unit tests.
 
 ## Other behaviours worth knowing
 

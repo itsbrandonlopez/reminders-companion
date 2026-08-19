@@ -43,7 +43,7 @@ struct RootTabView: View {
 
             TriageView()
                 .tabItem { Label("Triage", systemImage: "tray.full") }
-                .badge(env.pastDueCount)
+                .badge(env.backlogCount)
                 .tag(2)
         }
         .overlay(alignment: .bottomTrailing) {

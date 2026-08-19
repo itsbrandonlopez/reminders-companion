@@ -20,11 +20,4 @@ extension Color {
     }
 }
 
-extension Day {
-    var relativeLabel: String {
-        if self == .today() { return "Today" }
-        if self == Day.today().adding(days: 1) { return "Tomorrow" }
-        let f = DateFormatter(); f.dateFormat = "EEE"
-        return f.string(from: startOfDay())
-    }
-}
+// `Day.relativeShortLabel` now lives in `RemindersCore.DateLabels`.

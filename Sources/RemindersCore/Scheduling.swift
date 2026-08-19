@@ -67,11 +67,18 @@ public enum Scheduling {
         return c
     }
 
-    /// Whether a reminder in this state would be rejected when saved on iOS.
+    /// Whether a reminder in this state *may* be rejected when saved on iOS.
     ///
     /// The `EKReminder` header states that on iOS a due date requires a start date, or the
-    /// save fails with `EKErrorNoStartDate` — explicitly not a requirement on macOS. Every
-    /// path that writes a due date has to account for it.
+    /// save fails with `EKErrorNoStartDate` — explicitly not a requirement on macOS.
+    ///
+    /// Measured against a live store on iOS 26, that save is actually **accepted** and the
+    /// reminder reads back with `startDateComponents == nil`. The documented contract and
+    /// the observed behaviour disagree, so the app trusts neither: it writes what the user
+    /// asked for and repairs only a save that genuinely comes back refused
+    /// (`ReminderStore.saveRepairingStartDate`). This predicate is what that repair — and
+    /// `satisfyStartDateRequirement`, which still runs pre-emptively where a due date is
+    /// being *written* — use to decide.
     public static func needsStartDateForDueDate(
         due: DateComponents?, start: DateComponents?
     ) -> Bool {

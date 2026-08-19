@@ -43,9 +43,16 @@ struct TodayProvider: TimelineProvider {
         guard WidgetDataProvider.authorizationStatus() == .fullAccess else {
             return TodayEntry(date: .now, tasks: [], overdueCount: 0, isAuthorized: false)
         }
-        let today = await WidgetDataProvider.fetchToday()
-        let overdue = today.filter { $0.isOverdue() }.count
-        return TodayEntry(date: .now, tasks: today, overdueCount: overdue, isAuthorized: true)
+        // One fetch for both numbers. `overdueCount` counts across *everything*, not just
+        // today's tasks: filtering today's list for overdue items only ever finds tasks
+        // explicitly re-planned for today that still carry a past deadline — usually none —
+        // so the widget showed "0 overdue" beside a backlog of thirty, while the watch face
+        // showed the real figure. Both surfaces now report the same number.
+        let snapshot = await WidgetDataProvider.snapshot()
+        return TodayEntry(
+            date: .now, tasks: snapshot.today,
+            overdueCount: snapshot.overdueCount, isAuthorized: true
+        )
     }
 }
 

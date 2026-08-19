@@ -34,7 +34,9 @@ struct NextUpProvider: TimelineProvider {
         guard WidgetDataProvider.authorizationStatus() == .fullAccess else {
             return NextUpEntry(date: .now, task: nil, isAuthorized: false)
         }
-        return NextUpEntry(date: .now, task: await WidgetDataProvider.fetchNext(), isAuthorized: true)
+        return NextUpEntry(
+            date: .now, task: await WidgetDataProvider.snapshot().next, isAuthorized: true
+        )
     }
 }
 
@@ -81,7 +83,7 @@ struct NextUpWidgetView: View {
                     Text("Next Up").font(.caption2).foregroundStyle(.secondary)
                     Text(task.title).font(.headline).lineLimit(2)
                     if let day = task.boardDay {
-                        Text(day.relativeLabel + (task.dueTimeLabel.map { " · \($0)" } ?? ""))
+                        Text(day.relativeShortLabel + (task.dueTimeLabel.map { " · \($0)" } ?? ""))
                             .font(.caption2)
                     }
                 }
@@ -98,7 +100,7 @@ struct NextUpWidgetView: View {
                             .lineLimit(3)
                             .foregroundStyle(WidgetPalette.textPrimary)
                         if let day = task.boardDay {
-                            Text(day.relativeLabel + (task.dueTimeLabel.map { " · \($0)" } ?? ""))
+                            Text(day.relativeShortLabel + (task.dueTimeLabel.map { " · \($0)" } ?? ""))
                                 .font(.caption2)
                                 .foregroundStyle(task.isOverdue() ? WidgetPalette.overdue : WidgetPalette.textSecondary)
                         }

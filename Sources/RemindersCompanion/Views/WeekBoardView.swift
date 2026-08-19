@@ -135,7 +135,7 @@ struct DayColumn: View {
             isTargeted: isTargeted
         ) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(day.weekdayName.uppercased())
+                Text(day.shortWeekday.uppercased())
                     .font(.system(size: 10.5, weight: .semibold))
                     .tracking(0.6)
                     .foregroundStyle(day.isToday ? Palette.accent : Palette.textSecondary)
@@ -377,7 +377,8 @@ struct BacklogColumn: View {
     @State private var isTargeted = false
 
     var body: some View {
-        BoardColumn(
+        @Bindable var env = env
+        return BoardColumn(
             tint: env.backlog.isEmpty ? Palette.column : Palette.overdue.opacity(0.07),
             isTargeted: isTargeted
         ) {
@@ -387,7 +388,7 @@ struct BacklogColumn: View {
                     .font(.system(size: 10.5, weight: .semibold))
                     .tracking(0.6)
                 Spacer()
-                BacklogSortMenu()
+                AgeSortMenu(sort: $env.backlogSort, help: "Sort backlog")
                 if !env.backlog.isEmpty {
                     Text("\(env.backlog.count)").font(.system(size: 10.5))
                 }
@@ -506,29 +507,35 @@ struct UnscheduledFilterMenu: View {
 }
 
 
-/// Chooses how both backlogs are ordered. One control, one shared preference — the Week
-/// and Today backlogs answer the same question and should not disagree about ordering.
-struct BacklogSortMenu: View {
-    @Environment(AppEnvironment.self) private var env
+/// Chooses how a past-due pile is ordered.
+///
+/// Takes a binding rather than reaching for one shared preference. The Week board's
+/// Backlog and the Today board's Overdue column look alike but hold different sets — one
+/// is "slipped past the whole week", the other "its day has gone" — so they get their own
+/// orderings. A single control governing both would be one control governing two
+/// different questions.
+struct AgeSortMenu: View {
+    @Binding var sort: BacklogSort
+    let help: String
 
     var body: some View {
         Menu {
             ForEach(BacklogSort.allCases, id: \.self) { option in
                 Button {
-                    env.backlogSort = option
+                    sort = option
                 } label: {
                     // A leading checkmark marks the active option, matching how the
                     // other menus in the app read.
-                    Label(option.label, systemImage: env.backlogSort == option ? "checkmark" : "")
+                    Label(option.label, systemImage: sort == option ? "checkmark" : "")
                 }
             }
         } label: {
-            Image(systemName: env.backlogSort.symbol)
+            Image(systemName: sort.symbol)
                 .font(.system(size: 10, weight: .semibold))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Sort backlog: \(env.backlogSort.label)")
+        .help("\(help): \(sort.label)")
     }
 }

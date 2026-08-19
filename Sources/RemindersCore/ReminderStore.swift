@@ -29,6 +29,14 @@ public final class ReminderStore {
     public private(set) var tasks: [TaskItem] = []
     public private(set) var isLoading = false
 
+    /// Bumped whenever `lists` or `tasks` is replaced.
+    ///
+    /// Lets a view model cache slices derived from them — filtered sets, day buckets,
+    /// counts — and know when to rebuild, without comparing whole arrays. Reading it
+    /// registers the same observation dependency reading `tasks` would, so a cached
+    /// getter still invalidates SwiftUI correctly.
+    public private(set) var dataRevision = 0
+
     /// Calendar access is tracked separately from reminders: it is optional, opt-in, and
     /// its own TCC permission.
     public internal(set) var eventAccess: AccessState = .unknown
@@ -40,7 +48,13 @@ public final class ReminderStore {
     /// fetched objects are scoped to the instance that produced them, so sharing one
     /// avoids a whole class of cross-store bugs.
     let store = EKEventStore()
-    private let meta: MetaStore
+    /// The sidecar, when there is one.
+    ///
+    /// Optional because only the Mac has anything to put in it. The phone shows no manual
+    /// ordering and no estimates, so carrying a sidecar there meant reconciling a SwiftData
+    /// row per reminder on every refresh — and writing a database to disk — for values
+    /// nothing on that platform ever reads.
+    private let meta: MetaStore?
     /// `deinit` is nonisolated, so the observer token cannot live on this main-actor
     /// type directly. A tiny box keeps teardown correct under strict concurrency.
     private final class ObserverBox: @unchecked Sendable { var token: NSObjectProtocol? }
@@ -53,7 +67,7 @@ public final class ReminderStore {
 
     func markLocalWrite() { lastLocalWrite = .now }
 
-    public init(meta: MetaStore) {
+    public init(meta: MetaStore?) {
         self.meta = meta
         self.access = Self.currentState()
         self.eventAccess = Self.eventAccessState()
@@ -113,12 +127,20 @@ public final class ReminderStore {
         ) { [weak self] _ in
             guard let self else { return }
             MainActor.assumeIsolated {
-                // Skip the echo of a change this app just made.
-                guard Date.now.timeIntervalSince(self.lastLocalWrite) > Self.localWriteEcho
-                else { return }
+                // A write this app just made fires its own notification, and `mutate` has
+                // already refreshed — so inside the echo window there is usually nothing
+                // new to fetch. But this notification is *never redelivered*: dropping it
+                // outright also discards a genuine external change that happened to land
+                // in the same window (an iCloud push arriving 400ms after you ticked
+                // something off), and the app would then show stale data indefinitely.
+                //
+                // So back off rather than skip. The debounce below collapses the echo and
+                // anything riding alongside it into one late refetch — at worst one extra
+                // fetch per edit, versus silently missing another device's work.
+                let isEcho = Date.now.timeIntervalSince(self.lastLocalWrite) <= Self.localWriteEcho
                 self.refreshTask?.cancel()
                 self.refreshTask = Task { [weak self] in
-                    try? await Task.sleep(for: .milliseconds(300))
+                    try? await Task.sleep(for: isEcho ? .milliseconds(1200) : .milliseconds(300))
                     guard !Task.isCancelled else { return }
                     await self?.refresh()
                 }
@@ -128,12 +150,24 @@ public final class ReminderStore {
 
     // MARK: - Reading
 
+    /// Bumped by every `refresh`, so a slow one can tell it has been overtaken.
+    private var refreshGeneration = 0
+
     public func refresh() async {
         guard access == .granted else { return }
+        // `refresh` is `@MainActor` but not serialized: `await fetch` is a suspension point,
+        // so several can be in flight at once — a debounced external change alongside the
+        // explicit refresh every `mutate` performs, say. Without a generation, whichever
+        // EventKit callback happens to return *last* wins, which is not necessarily the one
+        // that started last, and an older snapshot can overwrite a newer one.
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
         isLoading = true
-        defer { isLoading = false }
+        // Only the newest run may clear the spinner; an overtaken one leaving would hide
+        // the fact that a fetch is still running.
+        defer { if generation == refreshGeneration { isLoading = false } }
 
-        lists = store.calendars(for: .reminder).map { calendar in
+        let fetchedLists = store.calendars(for: .reminder).map { calendar in
             TaskList(
                 id: calendar.calendarIdentifier,
                 title: calendar.title,
@@ -152,26 +186,40 @@ public final class ReminderStore {
         )
         let reminders = await fetch(predicate)
 
+        // Overtaken while waiting on EventKit. Publishing now would put older data on
+        // screen than what is already there, and would run the sidecar's garbage collection
+        // against a stale set of living ids.
+        guard generation == refreshGeneration else { return }
+
+        lists = fetchedLists
         var living = Set<String>()
         var items: [TaskItem] = []
         items.reserveCapacity(reminders.count)
 
-        for (index, reminder) in reminders.enumerated() {
+        // One fetch of the sidecar for the whole pass, rather than a predicate fetch per
+        // reminder. Nil when there is no sidecar at all — see `meta`.
+        var metaIndex = meta?.indexedByExternalID()
+
+        for (position, reminder) in reminders.enumerated() {
             // Seeded so an untouched column reads high-priority-first, while any manual
             // reordering afterwards wins outright.
             let seed = Double(Priority(reminderValue: Int(reminder.priority)).sortWeight) * 1_000_000
-                + Double(index) * Ranking.step
-            guard let item = makeItem(reminder, fallbackRank: seed) else { continue }
+                + Double(position) * Ranking.step
+            guard let item = makeItem(reminder, fallbackRank: seed, metaIndex: &metaIndex)
+            else { continue }
             living.insert(item.id)
             items.append(item)
         }
 
-        meta.save()
-        // `living` holds only *incomplete* reminders, so it is not a list of what still
-        // exists — completing a task would otherwise delete its estimate and manual
-        // position. Collection is by staleness instead.
-        meta.collectGarbage(livingIDs: living)
+        if let meta {
+            meta.save()
+            // `living` holds only *incomplete* reminders, so it is not a list of what still
+            // exists — completing a task would otherwise delete its estimate and manual
+            // position. Collection is by staleness instead.
+            meta.collectGarbage(livingIDs: living)
+        }
         tasks = items
+        dataRevision &+= 1
     }
 
     /// `EKReminder` is not `Sendable` and EventKit calls back on its own queue, so the
@@ -190,9 +238,22 @@ public final class ReminderStore {
         return boxed.value
     }
 
-    private func makeItem(_ reminder: EKReminder, fallbackRank: Double) -> TaskItem? {
+    /// Builds one `TaskItem`, reconciling it against the sidecar index in passing.
+    ///
+    /// `metaIndex` is `inout` so a row created here is visible to the rest of the pass
+    /// without another fetch; nil when the app is running without a sidecar, in which case
+    /// the task gets the seeded rank and no estimate — exactly what `WidgetDataProvider`
+    /// hands to `makeTaskItem` for the same reason.
+    private func makeItem(
+        _ reminder: EKReminder, fallbackRank: Double, metaIndex: inout [String: TaskMeta]?
+    ) -> TaskItem? {
         guard let id = reminder.calendarItemExternalIdentifier else { return nil }
-        let row = meta.ensure(id, title: reminder.title ?? "", defaultRank: fallbackRank)
+        guard let meta, metaIndex != nil else {
+            return Self.makeTaskItem(from: reminder, rank: fallbackRank, estimateMinutes: nil)
+        }
+        let row = meta.ensure(
+            id, title: reminder.title ?? "", defaultRank: fallbackRank, in: &metaIndex!
+        )
         return Self.makeTaskItem(from: reminder, rank: row.rank, estimateMinutes: row.estimateMinutes)
     }
 
@@ -337,6 +398,41 @@ public final class ReminderStore {
         #endif
     }
 
+    /// Clears the planned day.
+    ///
+    /// Deliberately writes exactly what the user asked for and nothing more. `EKReminder`'s
+    /// header states that iOS rejects a due date with no start date (`EKErrorNoStartDate`),
+    /// which would make this fail on any task carrying a deadline — but measured against a
+    /// live store on iOS 26 the save is accepted, start date and all, and the reminder
+    /// comes back with `startDateComponents == nil`. See `saveRepairingStartDate`.
+    ///
+    /// Pre-emptively inventing a start date to satisfy a rule this platform does not
+    /// enforce would store different data on iPhone than the Mac stores for the same
+    /// gesture, which is the drift the shared core exists to prevent. So the repair is
+    /// reactive: attempted only if a save genuinely comes back refused.
+    func clearPlannedDay(on reminder: EKReminder) {
+        reminder.startDateComponents = nil
+    }
+
+    /// Saves, repairing the one rejection the app can resolve on the user's behalf.
+    ///
+    /// The header documents `EKErrorNoStartDate` on iOS; the observed behaviour on iOS 26
+    /// is that the save succeeds. Both are handled by trying the honest write first and
+    /// only supplying a start date when the platform actually refuses without one — so a
+    /// platform that enforces the rule still works, and one that doesn't is left alone.
+    func saveRepairingStartDate(_ reminder: EKReminder, commit: Bool) throws {
+        do {
+            try store.save(reminder, commit: commit)
+        } catch let error as NSError where Self.isMissingStartDate(error) {
+            satisfyStartDateRequirement(on: reminder)
+            try store.save(reminder, commit: commit)
+        }
+    }
+
+    private static func isMissingStartDate(_ error: NSError) -> Bool {
+        error.domain == EKErrorDomain && error.code == EKError.Code.noStartDate.rawValue
+    }
+
     /// Resolves a live reminder for one of our value types.
     ///
     /// Looks up by external identifier rather than item identifier because the latter is
@@ -359,17 +455,20 @@ public final class ReminderStore {
     /// `recordUndo` is false when this *is* the undo, so undoing can't itself become the
     /// next undoable action and trap the user in a loop.
     private func performSchedule(_ task: TaskItem, to day: Day?, recordUndo: Bool) async {
-        let previous = task.plannedDay
-        await mutate(task) { reminder in
+        // Read the previous value off the *live* reminder, at the top of the closure and
+        // before anything is written. See `mutate` for why the caller's snapshot will not do.
+        var previous: Day?
+        let saved = await mutate(task) { reminder in
+            previous = Day(reminder.startDateComponents)
             if let day {
                 reminder.startDateComponents = Scheduling.plannedComponents(
                     for: day, alongside: reminder.dueDateComponents
                 )
             } else {
-                reminder.startDateComponents = nil
+                self.clearPlannedDay(on: reminder)
             }
         }
-        if recordUndo, previous != day {
+        if saved, recordUndo, previous != day {
             undoable = .reschedule(task: task, previousDay: previous)
         }
     }
@@ -423,15 +522,21 @@ public final class ReminderStore {
 
         for task in batch {
             guard let reminder = liveReminder(for: task) else { failed += 1; continue }
-            previous.append(PreviousSchedule(task: task, previousDay: task.plannedDay))
+            // From the live reminder, and only recorded once the save has been accepted —
+            // an undo entry for a task that never moved would put it "back" to a day it is
+            // already on, or to a day it has not been on for some time.
+            let previousDay = Day(reminder.startDateComponents)
             if let day {
                 reminder.startDateComponents = Scheduling.plannedComponents(
                     for: day, alongside: reminder.dueDateComponents
                 )
             } else {
-                reminder.startDateComponents = nil
+                clearPlannedDay(on: reminder)
             }
-            do { try store.save(reminder, commit: false) } catch { failed += 1 }
+            do {
+                try saveRepairingStartDate(reminder, commit: false)
+                previous.append(PreviousSchedule(task: task, previousDay: previousDay))
+            } catch { failed += 1 }
         }
 
         var commitFailed = false
@@ -456,9 +561,12 @@ public final class ReminderStore {
 
     /// Clears the deadline end of a span, leaving the task planned for a single day.
     public func clearSpanEnd(_ task: TaskItem) async {
-        let previous = task.dueDay
-        await mutate(task) { $0.dueDateComponents = nil }
-        if previous != nil {
+        var previous: Day?
+        let saved = await mutate(task) { reminder in
+            previous = Day(reminder.dueDateComponents)
+            reminder.dueDateComponents = nil
+        }
+        if saved, previous != nil {
             undoable = .deadline(task: task, previousDue: previous)
         }
     }
@@ -472,7 +580,7 @@ public final class ReminderStore {
     public private(set) var undoable: UndoableAction?
 
     public func setCompleted(_ task: TaskItem, _ completed: Bool) async {
-        await mutate(task) { $0.isCompleted = completed }
+        guard await mutate(task, { $0.isCompleted = completed }) else { return }
         // Un-completing is itself the undo of completing; recording it would let someone
         // toggle a task forever via the undo banner.
         undoable = completed ? .complete(task: task) : nil
@@ -505,9 +613,9 @@ public final class ReminderStore {
                     for: day, alongside: reminder.dueDateComponents
                 )
             } else {
-                reminder.startDateComponents = nil
+                clearPlannedDay(on: reminder)
             }
-            try? store.save(reminder, commit: false)
+            try? saveRepairingStartDate(reminder, commit: false)
         }
         markLocalWrite()
         do { try store.commit() } catch {
@@ -526,18 +634,22 @@ public final class ReminderStore {
     /// part of a rule the user built in Reminders.
     @discardableResult
     public func setRecurrence(_ task: TaskItem, _ rule: SimpleRecurrence?) async -> Bool {
-        if let existing = task.recurrence, !existing.isEditableHere {
-            lastError = "That repeat rule is more detailed than this app can edit. Change it in Reminders."
-            return false
-        }
-        // A repeat rule is anchored to the deadline. Verified against live EventKit: adding
-        // one to a reminder with no due date is accepted in memory and silently dropped on
-        // save, so refusing loudly beats appearing to work.
-        if rule != nil, task.dueDay == nil {
-            lastError = "Set a deadline before making “\(task.title)” repeat — a repeat needs a date to repeat from."
-            return false
-        }
         await mutate(task) { reminder in
+            // Both guards read the live reminder rather than `task`: a snapshot taken when
+            // the detail view opened may predate a rule or deadline changed elsewhere, and
+            // deciding from it either clobbers a rule this app cannot rebuild or refuses an
+            // edit that is perfectly valid.
+            if let existing = reminder.recurrenceRules?.first.map(Self.recurrenceShape),
+               !existing.isEditableHere {
+                throw Refusal(message: "That repeat rule is more detailed than this app can edit. Change it in Reminders.")
+            }
+            // A repeat rule is anchored to the deadline. Verified against live EventKit:
+            // adding one to a reminder with no due date is accepted in memory and silently
+            // dropped on save, so refusing loudly beats appearing to work.
+            if rule != nil, reminder.dueDateComponents == nil {
+                throw Refusal(message: "Set a deadline before making “\(task.title)” repeat — a repeat needs a date to repeat from.")
+            }
+
             for existing in reminder.recurrenceRules ?? [] {
                 reminder.removeRecurrenceRule(existing)
             }
@@ -558,7 +670,6 @@ public final class ReminderStore {
                 EKRecurrenceRule(recurrenceWith: frequency, interval: rule.interval, end: end)
             )
         }
-        return true
     }
 
     /// Sets a single absolute alarm, or clears all alarms when `date` is nil.
@@ -568,11 +679,14 @@ public final class ReminderStore {
     /// fixed time, or into nothing at all.
     @discardableResult
     public func setAlarm(_ task: TaskItem, at date: Date?) async -> Bool {
-        if task.alarms.contains(where: { !$0.isEditableHere }) {
-            lastError = "That reminder has a location alert this app can't edit. Change it in Reminders."
-            return false
-        }
         await mutate(task) { reminder in
+            // Read the live alarms, not `task.alarms`. A geofence added in Reminders while
+            // this detail view was open is absent from the snapshot, and clearing alarms
+            // from a stale check would delete it with no way to rebuild it.
+            let live = (reminder.alarms ?? []).map(Self.alarmShape)
+            if live.contains(where: { !$0.isEditableHere }) {
+                throw Refusal(message: "That reminder has a location alert this app can't edit. Change it in Reminders.")
+            }
             for existing in reminder.alarms ?? [] {
                 reminder.removeAlarm(existing)
             }
@@ -580,7 +694,6 @@ public final class ReminderStore {
                 reminder.addAlarm(EKAlarm(absoluteDate: date))
             }
         }
-        return true
     }
 
     public func setPriority(_ task: TaskItem, _ priority: Priority) async {
@@ -602,6 +715,35 @@ public final class ReminderStore {
     public func setURL(_ task: TaskItem, _ urlString: String) async {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         await mutate(task) { $0.url = trimmed.isEmpty ? nil : URL(string: trimmed) }
+    }
+
+    /// Writes the free-text fields together, in one commit.
+    ///
+    /// The detail panel and the phone's task sheet both collect title, notes and URL while
+    /// you type and commit on dismiss. Sending them as three separate edits meant three
+    /// EventKit commits and three full refetches for a single "Done" — and, because each
+    /// was its own detached `Task`, in no guaranteed order. Pass nil for a field that has
+    /// not changed.
+    public func setFields(
+        _ task: TaskItem, title: String? = nil, notes: String? = nil, url: String? = nil
+    ) async {
+        guard title != nil || notes != nil || url != nil else { return }
+        await mutate(task) { reminder in
+            if let title {
+                let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Reminders has no concept of a blank task, so an emptied title is ignored
+                // rather than written — matching `setTitle`.
+                if !trimmed.isEmpty { reminder.title = trimmed }
+            }
+            if let notes {
+                let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+                reminder.notes = trimmed.isEmpty ? nil : trimmed
+            }
+            if let url {
+                let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+                reminder.url = trimmed.isEmpty ? nil : URL(string: trimmed)
+            }
+        }
     }
 
     /// Sets or clears the wall-clock time on the deadline, keeping the day it already has.
@@ -639,8 +781,9 @@ public final class ReminderStore {
     }
 
     private func performSetDueDay(_ task: TaskItem, to day: Day?, recordUndo: Bool) async {
-        let previous = task.dueDay
-        await mutate(task) { reminder in
+        var previous: Day?
+        let saved = await mutate(task) { reminder in
+            previous = Day(reminder.dueDateComponents)
             guard let day else {
                 reminder.dueDateComponents = nil
                 return
@@ -648,10 +791,10 @@ public final class ReminderStore {
             reminder.dueDateComponents = Scheduling.deadlineComponents(
                 for: day, preserving: reminder.dueDateComponents
             )
-            // iOS refuses to save a due date with no start date; see Scheduling.
+            // iOS may refuse a due date with no start date; see Scheduling.
             satisfyStartDateRequirement(on: reminder)
         }
-        if recordUndo, previous != day {
+        if saved, recordUndo, previous != day {
             undoable = .deadline(task: task, previousDue: previous)
         }
     }
@@ -662,11 +805,19 @@ public final class ReminderStore {
 
     private func performMove(_ task: TaskItem, toList listID: String, recordUndo: Bool) async {
         guard let calendar = store.calendar(withIdentifier: listID) else { return }
-        let previousID = task.listID
-        let previousName = task.listName
-        await mutate(task) { $0.calendar = calendar }
-        if recordUndo, previousID != listID {
-            undoable = .move(task: task, previousListID: previousID, previousListName: previousName)
+        var previousID: String?
+        var previousName: String?
+        let saved = await mutate(task) { reminder in
+            previousID = reminder.calendar?.calendarIdentifier
+            // Falls back to the snapshot's name only for the label. The *identifier* is what
+            // undo acts on and is never taken from the snapshot.
+            previousName = reminder.calendar?.title ?? task.listName
+            reminder.calendar = calendar
+        }
+        if saved, recordUndo, let previousID, previousID != listID {
+            undoable = .move(
+                task: task, previousListID: previousID, previousListName: previousName ?? task.listName
+            )
         }
     }
 
@@ -716,18 +867,59 @@ public final class ReminderStore {
         }
     }
 
-    private func mutate(_ task: TaskItem, _ body: (EKReminder) -> Void) async {
+    /// Thrown by a `mutate` closure that has looked at the live reminder and decided the
+    /// edit must not go ahead. Carries the message the user sees; nothing is saved.
+    struct Refusal: Error { let message: String }
+
+    /// Applies an edit to the live `EKReminder`, letting the closure veto after it has
+    /// seen the real object.
+    ///
+    /// The veto exists because a `TaskItem` is a snapshot taken whenever the caller last
+    /// refetched, and every detail view holds one for as long as it is open. A guard that
+    /// reads the snapshot is validating what the reminder looked like some time ago, not
+    /// what this write is about to overwrite — so a geofence alarm added on another device
+    /// in the meantime would be invisible to the check and destroyed by the write. Guards
+    /// therefore run *here*, against the same object the save touches.
+    ///
+    /// The same staleness applies to **undo**. An entry records the value a field held
+    /// before the edit, and taking that from `task` records what the field held whenever
+    /// the caller last refetched — so two edits to one field from a single open detail
+    /// panel both record the original value, and the intermediate one is unreachable. Every
+    /// `previous` in this file is therefore read off `reminder` at the top of the closure.
+    ///
+    /// Contract, in both directions: **a closure reads before it writes.** Reads that happen
+    /// after a mutation see the new value, and a throw after a mutation leaves it stranded
+    /// on the shared instance until the next refetch, since `EKReminder` is a live reference.
+    ///
+    /// Returns whether the write actually landed. Callers recording undo must honour it —
+    /// offering to reverse an edit that was refused or failed is offering to overwrite the
+    /// current value with a stale one.
+    ///
+    /// Taking a `throws` closure rather than overloading keeps the majority of edits — the
+    /// ones with no precondition to check — written exactly as they were.
+    @discardableResult
+    private func mutate(_ task: TaskItem, _ body: (EKReminder) throws -> Void) async -> Bool {
         guard let reminder = liveReminder(for: task) else {
             lastError = "“\(task.title)” is no longer in Reminders."
-            return
+            return false
         }
-        body(reminder)
+        do {
+            try body(reminder)
+        } catch let refusal as Refusal {
+            lastError = refusal.message
+            return false
+        } catch {
+            lastError = "Could not edit “\(task.title)”: \(error.localizedDescription)"
+            return false
+        }
         do {
             markLocalWrite()
-            try store.save(reminder, commit: true)
+            try saveRepairingStartDate(reminder, commit: true)
             await refresh()
+            return true
         } catch {
             lastError = "Could not save “\(task.title)”: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -747,6 +939,7 @@ public final class ReminderStore {
         below: TaskItem?,
         within neighbourhood: [TaskItem]? = nil
     ) {
+        guard let meta else { return }
         if let rank = Ranking.between(above?.rank, below?.rank) {
             meta.setRank(rank, for: task.id)
             applyLocalRanks()
@@ -758,18 +951,19 @@ public final class ReminderStore {
         // drop the card at an arbitrary position.
         let column = (neighbourhood ?? tasks.filter { $0.listID == task.listID })
             .sorted { $0.rank < $1.rank }
-        for (rank, item) in zip(Ranking.normalized(count: column.count), column) {
-            meta.setRank(rank, for: item.id)
+        let respread = Ranking.respread(column.map(\.id), above: above?.id, below: below?.id)
+        var ranks = respread.ranks
+        // Recomputed from the *new* neighbour values. Reusing the pre-respread ones would
+        // drop the card at an arbitrary position — see `Ranking.respread`.
+        if let rank = Ranking.between(respread.above, respread.below) {
+            ranks[task.id] = rank
         }
-        let freshAbove = above.flatMap { meta.meta(for: $0.id)?.rank }
-        let freshBelow = below.flatMap { meta.meta(for: $0.id)?.rank }
-        if let rank = Ranking.between(freshAbove, freshBelow) {
-            meta.setRank(rank, for: task.id)
-        }
+        meta.setRanks(ranks)
         applyLocalRanks()
     }
 
     public func setEstimate(_ minutes: Int?, for task: TaskItem) {
+        guard let meta else { return }
         meta.setEstimate(minutes, for: task.id)
         applyLocalRanks()
     }
@@ -777,13 +971,18 @@ public final class ReminderStore {
     /// Re-reads sidecar values into the published tasks without a Reminders round trip,
     /// so a drag-to-reorder feels instant.
     private func applyLocalRanks() {
+        guard let meta else { return }
+        // One indexed read for the whole list. This used to be a predicate fetch per task,
+        // on the path whose entire purpose is to make a drag feel instant.
+        let index = meta.indexedByExternalID()
         tasks = tasks.map { task in
-            guard let row = meta.meta(for: task.id) else { return task }
+            guard let row = index[task.id] else { return task }
             var copy = task
             copy.rank = row.rank
             copy.estimateMinutes = row.estimateMinutes
             return copy
         }
+        dataRevision &+= 1
     }
 
     public func clearError() { lastError = nil }

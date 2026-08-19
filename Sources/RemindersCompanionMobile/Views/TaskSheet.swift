@@ -157,9 +157,12 @@ struct TaskSheet: View {
     }
 
     /// Text commits on dismiss, not per keystroke — each write round-trips to EventKit
-    /// and refetches, which would be unusable while typing.
+    /// and refetches, which would be unusable while typing. Both fields go in one call, so
+    /// dismissing is one commit and one refetch rather than two of each.
     private func commit() {
-        if title != task.title { Task { await env.store.setTitle(task, title) } }
-        if notes != (task.notes ?? "") { Task { await env.store.setNotes(task, notes) } }
+        let newTitle = title != task.title ? title : nil
+        let newNotes = notes != (task.notes ?? "") ? notes : nil
+        guard newTitle != nil || newNotes != nil else { return }
+        Task { await env.store.setFields(task, title: newTitle, notes: newNotes) }
     }
 }

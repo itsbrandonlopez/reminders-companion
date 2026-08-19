@@ -15,12 +15,12 @@ struct TodayView: View {
     var body: some View {
         NavigationStack {
             List {
-                if env.pastDueCount > 0 {
+                if env.backlogCount > 0 {
                     Section {
                         Button(action: onShowTriage) {
                             HStack(spacing: 9) {
                                 Image(systemName: "exclamationmark.triangle.fill")
-                                Text("\(env.pastDueCount) past due")
+                                Text("\(env.backlogCount) in backlog")
                                     .font(.system(size: 14, weight: .medium))
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))

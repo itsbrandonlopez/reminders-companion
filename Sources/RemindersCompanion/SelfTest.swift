@@ -31,7 +31,9 @@ enum SelfTest {
         guard let created = store.tasks.first(where: { $0.title == title }) else {
             return (log + ["✗ create failed — nothing to test against"]).joined(separator: "\n")
         }
-        check("create", true, created.id)
+        // No `check("create", true, ...)` here: passing a literal cannot fail, and the
+        // `guard let` above is what actually asserts creation worked.
+        log.append("  created \(created.id)")
         check("new task lands in backlog", created.isBacklog)
 
         // Schedule → the drag-onto-a-day path.

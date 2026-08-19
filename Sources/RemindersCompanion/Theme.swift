@@ -85,18 +85,7 @@ struct Checkbox: View {
     }
 }
 
-extension Day {
-    var weekdayName: String {
-        let f = DateFormatter(); f.dateFormat = "EEE"
-        return f.string(from: startOfDay())
-    }
-
-    var dayNumber: String { String(day) }
-    var isToday: Bool { self == Day.today() }
-    var isPast: Bool { self < Day.today() }
-
-    var monthDayLabel: String {
-        let f = DateFormatter(); f.dateFormat = "MMM d"
-        return f.string(from: startOfDay())
-    }
-}
+// `Day`'s labels — `shortWeekday`, `monthDayLabel`, `isToday`, `dayNumber` — now live in
+// `RemindersCore.DateLabels`, shared with the phone and the widgets and built from locale
+// templates rather than fixed patterns. They used to be redeclared in each of the three
+// theme files, where `weekdayName` meant "Mon" here and "Monday" on the phone.

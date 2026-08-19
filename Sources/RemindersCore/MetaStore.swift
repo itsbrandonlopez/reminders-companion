@@ -39,8 +39,58 @@ public final class MetaStore {
         (try? context.fetch(FetchDescriptor<TaskMeta>())) ?? []
     }
 
+    /// Every row, indexed by external identifier.
+    ///
+    /// `meta(for:)` compiles and runs a predicate fetch per call, so reconciling a refresh
+    /// of *n* reminders one at a time was *n* round trips into SwiftData — invisible at 50
+    /// reminders, the dominant cost at 10,000. Anything touching many tasks takes the whole
+    /// table once instead. The rows are small, and the caller is already holding every
+    /// matching `EKReminder` in memory at that moment anyway.
+    public func indexedByExternalID() -> [String: TaskMeta] {
+        var index: [String: TaskMeta] = [:]
+        let rows = all()
+        index.reserveCapacity(rows.count)
+        for row in rows { index[row.externalID] = row }
+        return index
+    }
+
+    /// `ensure`, against a caller-held index rather than a fresh fetch.
+    ///
+    /// Inserts into `index` as well as the context, so a bulk pass stays consistent without
+    /// going back to the database for rows it just created.
+    @discardableResult
+    public func ensure(
+        _ externalID: String,
+        title: String,
+        defaultRank: @autoclosure () -> Double,
+        in index: inout [String: TaskMeta]
+    ) -> TaskMeta {
+        if let existing = index[externalID] {
+            existing.titleSnapshot = title
+            existing.lastSeen = .now
+            return existing
+        }
+        let created = TaskMeta(externalID: externalID, rank: defaultRank(), titleSnapshot: title)
+        context.insert(created)
+        index[externalID] = created
+        return created
+    }
+
     public func setRank(_ rank: Double, for externalID: String) {
         meta(for: externalID)?.rank = rank
+        save()
+    }
+
+    /// Applies many ranks in a single transaction.
+    ///
+    /// A column respread calls this once instead of `setRank` per card, which was a fetch
+    /// *and* a `context.save()` each — 200 of both for a 200-card column.
+    public func setRanks(_ ranks: [String: Double]) {
+        guard !ranks.isEmpty else { return }
+        let index = indexedByExternalID()
+        for (externalID, rank) in ranks {
+            index[externalID]?.rank = rank
+        }
         save()
     }
 

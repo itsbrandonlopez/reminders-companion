@@ -111,9 +111,7 @@ public struct TaskItem: Identifiable, Hashable, Sendable {
     /// matters on a bill and that a day column alone cannot convey.
     public var dueTimeLabel: String? {
         guard dueIsTimed, let dueDate else { return nil }
-        let f = DateFormatter()
-        f.dateFormat = "h:mm a"
-        return f.string(from: dueDate)
+        return DateLabels.time.string(from: dueDate)
     }
 
     /// Where this task sits on the board: planned day if set, else its deadline.

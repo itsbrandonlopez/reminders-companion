@@ -16,6 +16,18 @@ final class CalendarEventTests: XCTestCase {
         ))!
     }
 
+    /// Collapses every Unicode space separator to a plain space.
+    ///
+    /// Time labels are built from a locale template now, and current CLDR puts a narrow
+    /// no-break space (U+202F) before AM/PM — which is what the system's own apps render,
+    /// and not something these tests are about. They exist for the end-boundary rule; the
+    /// exact glyph between "9:00" and "AM" is `DateLabels`' business and ICU's to change.
+    private func spacesNormalized(_ s: String?) -> String? {
+        s?.unicodeScalars.reduce(into: "") { out, scalar in
+            out.append(scalar.properties.isWhitespace ? " " : String(scalar))
+        }
+    }
+
     private func event(
         start: Date, end: Date, allDay: Bool = false, title: String = "Gig"
     ) -> CalendarEvent {
@@ -75,13 +87,13 @@ final class CalendarEventTests: XCTestCase {
 
     func testTimeLabelForSingleDayEventShowsBothEnds() {
         let e = event(start: date(8, 20, 9), end: date(8, 20, 17))
-        XCTAssertEqual(e.timeLabel(on: Day(year: 2026, month: 8, day: 20), in: zone), "9:00 AM – 5:00 PM")
+        XCTAssertEqual(spacesNormalized(e.timeLabel(on: Day(year: 2026, month: 8, day: 20), in: zone)), "9:00 AM – 5:00 PM")
     }
 
     func testTimeLabelSplitsAcrossDays() {
         let e = event(start: date(8, 20, 22), end: date(8, 21, 2))
-        XCTAssertEqual(e.timeLabel(on: Day(year: 2026, month: 8, day: 20), in: zone), "from 10:00 PM")
-        XCTAssertEqual(e.timeLabel(on: Day(year: 2026, month: 8, day: 21), in: zone), "until 2:00 AM")
+        XCTAssertEqual(spacesNormalized(e.timeLabel(on: Day(year: 2026, month: 8, day: 20), in: zone)), "from 10:00 PM")
+        XCTAssertEqual(spacesNormalized(e.timeLabel(on: Day(year: 2026, month: 8, day: 21), in: zone)), "until 2:00 AM")
     }
 
     func testTimeLabelForMiddleOfALongEvent() {

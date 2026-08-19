@@ -48,10 +48,12 @@ final class MobileEnvironment {
     private static let setupKey = "mobile.hasCompletedSetup"
 
     init() {
-        // The sidecar is unused on the phone but `ReminderStore` needs one for rank
-        // seeding; an in-memory store avoids leaving a database behind for nothing.
-        let meta = (try? MetaStore()) ?? (try! MetaStore(inMemory: true))
-        store = ReminderStore(meta: meta)
+        // No sidecar at all on the phone. It holds manual ordering, estimates and folders —
+        // none of which this app shows — so carrying one meant reconciling a SwiftData row
+        // per reminder on every refresh, and leaving a database on disk, to store values
+        // nothing here ever reads. `ReminderStore` seeds ranks from priority when there is
+        // no sidecar, which is exactly what this app sorts by anyway.
+        store = ReminderStore(meta: nil)
         selectedListIDs = Set(defaults.stringArray(forKey: Self.listsKey) ?? [])
         overlayCalendarIDs = Set(defaults.stringArray(forKey: Self.overlayKey) ?? [])
         hasCompletedSetup = defaults.bool(forKey: Self.setupKey)
@@ -73,51 +75,100 @@ final class MobileEnvironment {
         selectedListIDs.isEmpty ? Set(store.lists.map(\.id)) : selectedListIDs
     }
 
-    /// Ordered by priority then day. The phone has no manual ordering to honour.
-    var tasks: [TaskItem] {
+    var week: [Day] { Scheduling.week(containing: weekAnchor) }
+
+    // MARK: - Derived slices
+    //
+    // Computed once behind a key, for the same reason as the Mac's — more acutely, in fact.
+    // `tasks(on:)` used to re-derive `triaged`, which re-derived `backlog` *and*
+    // `unscheduled`, each of which re-derived and re-sorted `tasks`: three full sorts per
+    // call, and `WeekView` calls it ten times per render between the day strip and the
+    // blocks.
+
+    private struct SliceKey: Equatable {
+        let dataRevision: Int
+        let selectedListIDs: Set<String>
+        let listCount: Int
+        let today: Day
+    }
+
+    private struct Slices {
+        var tasks: [TaskItem] = []
+        var backlog: [TaskItem] = []
+        var unscheduled: [TaskItem] = []
+        var byDay: [Day: [TaskItem]] = [:]
+    }
+
+    // Not observed: a memo of observable state, written from the getters that read it.
+    @ObservationIgnored private var cacheKey: SliceKey?
+    @ObservationIgnored private var cache = Slices()
+
+    private var slices: Slices {
+        let key = SliceKey(
+            dataRevision: store.dataRevision,
+            selectedListIDs: selectedListIDs,
+            listCount: store.lists.count,
+            today: .today()
+        )
+        if key == cacheKey { return cache }
+        let built = buildSlices(key)
+        cacheKey = key
+        cache = built
+        return built
+    }
+
+    private func buildSlices(_ key: SliceKey) -> Slices {
+        var out = Slices()
         let active = activeListIDs
-        return store.tasks
+        let weekStart = Scheduling.week(containing: key.today).first ?? key.today
+
+        // Ordered by priority then day. The phone has no manual ordering to honour.
+        out.tasks = store.tasks
             .filter { active.contains($0.listID) && !$0.isCompleted }
             .sorted { lhs, rhs in
                 if lhs.priority.sortWeight != rhs.priority.sortWeight {
                     return lhs.priority.sortWeight < rhs.priority.sortWeight
                 }
-                return (lhs.boardDay ?? .today()) < (rhs.boardDay ?? .today())
+                return (lhs.boardDay ?? key.today) < (rhs.boardDay ?? key.today)
             }
+
+        for task in out.tasks {
+            switch Scheduling.bucket(
+                plannedDay: task.plannedDay, dueDay: task.dueDay, currentWeekStart: weekStart
+            ) {
+            case .backlog:
+                out.backlog.append(task)
+            case .unscheduled:
+                out.unscheduled.append(task)
+            case let .day(day):
+                // The two triage piles are held back, so the day and week views stay clean.
+                out.byDay[day, default: []].append(task)
+            }
+        }
+        out.backlog.sort { ($0.boardDay ?? key.today) < ($1.boardDay ?? key.today) }
+        return out
     }
 
-    var week: [Day] { Scheduling.week(containing: weekAnchor) }
-
-    private var currentWeekStart: Day {
-        Scheduling.week(containing: .today()).first ?? .today()
-    }
+    /// Ordered by priority then day. The phone has no manual ordering to honour.
+    var tasks: [TaskItem] { slices.tasks }
 
     /// Work that slipped past the whole of the current week. Same rule as the Mac.
-    var backlog: [TaskItem] {
-        let start = currentWeekStart
-        return tasks.filter {
-            Scheduling.bucket(
-                plannedDay: $0.plannedDay, dueDay: $0.dueDay, currentWeekStart: start
-            ) == .backlog
-        }
-        .sorted { ($0.boardDay ?? .today()) < ($1.boardDay ?? .today()) }
-    }
+    var backlog: [TaskItem] { slices.backlog }
 
-    var unscheduled: [TaskItem] { tasks.filter(\.isBacklog) }
+    var unscheduled: [TaskItem] { slices.unscheduled }
 
-    private var triaged: Set<String> {
-        Set(backlog.map(\.id)).union(unscheduled.map(\.id))
-    }
-
-    /// Only dated work, with the two piles held back so the day and week views stay clean.
-    func tasks(on day: Day) -> [TaskItem] {
-        let held = triaged
-        return tasks.filter { $0.boardDay == day && !held.contains($0.id) }
-    }
+    /// Only dated work, with the two triage piles held back.
+    func tasks(on day: Day) -> [TaskItem] { slices.byDay[day] ?? [] }
 
     var todaysTasks: [TaskItem] { tasks(on: .today()) }
 
-    var pastDueCount: Int { backlog.count }
+    /// How many tasks are in the Triage backlog — work that slipped past the *whole*
+    /// current week, matching the Mac's Backlog column.
+    ///
+    /// Named for the pile it counts rather than "past due", which reads as "deadline has
+    /// passed" and is a different, larger set (`TaskItem.isOverdue`). The banner on Today
+    /// links straight to this pile, so it has to count exactly what the pile holds.
+    var backlogCount: Int { backlog.count }
 
     // MARK: - Quick add
 

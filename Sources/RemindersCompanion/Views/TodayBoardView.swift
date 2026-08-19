@@ -14,12 +14,11 @@ struct TodayBoardView: View {
     /// Anything whose day has already gone by — a missed deadline, or work planned for a
     /// day that has passed. Both need to resurface today, and neither belongs in a client
     /// column where it would read as today's work.
-    private var overdue: [TaskItem] {
-        env.filteredTasks.filter { task in
-            guard !task.isCompleted, let day = task.boardDay else { return false }
-            return day < today
-        }
-    }
+    ///
+    /// This is `env.overdue`, not `env.backlog`: the Week board's backlog holds only work
+    /// that slipped past the *whole* current week, which on a Tuesday would leave Monday's
+    /// missed deadline showing nowhere on this screen.
+    private var overdue: [TaskItem] { env.overdue }
 
     /// Today's actual work. Overdue items are pulled out into their own column, so a
     /// client column shows only what is genuinely due today.
@@ -63,7 +62,7 @@ struct TodayBoardView: View {
                             ListColumn(list: list, tasks: todaysTasks.filter { $0.listID == list.id })
                         }
                         if !overdue.isEmpty {
-                            TodayBacklogColumn(tasks: overdue)
+                            TodayOverdueColumn(tasks: overdue)
                         }
                     }
                     .padding(Metrics.gutter)
@@ -177,39 +176,42 @@ struct ListColumn: View {
 }
 
 
-/// Everything past due, in one vertical rather than split by client.
+/// Everything whose day has gone, in one vertical rather than split by client.
 ///
 /// Deliberately not broken into list columns: overdue work is a single pile you triage
 /// top to bottom, and splitting it across five columns is what let it slip in the first
-/// place. Ordering follows the shared backlog sort.
-struct TodayBacklogColumn: View {
+/// place.
+///
+/// Named Overdue rather than Backlog because it is a different set from the Week board's
+/// Backlog column — see `AppEnvironment.overdue`. `tasks` arrives already ordered by
+/// `overdueSort`.
+struct TodayOverdueColumn: View {
     let tasks: [TaskItem]
     @Environment(AppEnvironment.self) private var env
     @State private var isTargeted = false
 
-    private var ordered: [TaskItem] { env.sortedByAge(tasks) }
-
     var body: some View {
-        BoardColumn(tint: Palette.overdue.opacity(0.08), isTargeted: isTargeted) {
+        @Bindable var env = env
+        return BoardColumn(tint: Palette.overdue.opacity(0.08), isTargeted: isTargeted) {
             HStack(spacing: 5) {
                 Image(systemName: "clock.arrow.circlepath").font(.system(size: 10))
-                Text("BACKLOG")
+                Text("OVERDUE")
                     .font(.system(size: 10.5, weight: .semibold))
                     .tracking(0.6)
                 Spacer()
-                BacklogSortMenu()
+                AgeSortMenu(sort: $env.overdueSort, help: "Sort overdue")
                 Text("\(tasks.count)").font(.system(size: 10.5))
             }
             .foregroundStyle(Palette.overdue)
         } content: {
-            ForEach(ordered) { task in
+            ForEach(tasks) { task in
                 TaskCardView(task: task).draggable(task.id)
             }
         } footer: {
             // One tap to sweep the whole pile onto today, which is the usual answer.
             Button {
                 // Batched: the per-task path would commit and refetch once per item.
-                Task { await env.store.schedule(ordered, to: .today()) }
+                Task { await env.store.schedule(tasks, to: .today()) }
             } label: {
                 Text("Move All to Today")
                     .font(.system(size: 11.5))

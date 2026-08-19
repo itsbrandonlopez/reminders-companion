@@ -58,10 +58,16 @@ final class AppEnvironment {
         }
     }
 
-    /// Ordering for both backlogs. Persisted — it is a working preference, not a
-    /// per-session one.
+    /// Ordering for the Week board's backlog. Persisted — it is a working preference, not
+    /// a per-session one.
     var backlogSort: BacklogSort = .oldestFirst {
         didSet { defaults.set(backlogSort.rawValue, forKey: Self.backlogSortKey) }
+    }
+
+    /// Ordering for the Today board's overdue pile. Separate from `backlogSort` because
+    /// the two piles hold different sets — see `overdue`.
+    var overdueSort: BacklogSort = .oldestFirst {
+        didSet { defaults.set(overdueSort.rawValue, forKey: Self.overdueSortKey) }
     }
 
     /// Which lists feed the Unscheduled column. Empty means all of them.
@@ -86,6 +92,7 @@ final class AppEnvironment {
     private static let unscheduledKey = "unscheduledListIDs"
     private static let seededFoldersKey = "didSeedFolders"
     private static let backlogSortKey = "backlogSort"
+    private static let overdueSortKey = "overdueSort"
     private static let setupCompleteKey = "hasCompletedSetup"
 
     /// Held so the sidebar can read and mutate folders. Folders are sidecar-only: the
@@ -109,6 +116,8 @@ final class AppEnvironment {
         self.unscheduledListIDs = Set(defaults.stringArray(forKey: Self.unscheduledKey) ?? [])
         self.backlogSort = BacklogSort(rawValue: defaults.string(forKey: Self.backlogSortKey) ?? "")
             ?? .oldestFirst
+        self.overdueSort = BacklogSort(rawValue: defaults.string(forKey: Self.overdueSortKey) ?? "")
+            ?? .oldestFirst
         self.hasCompletedSetup = defaults.bool(forKey: Self.setupCompleteKey)
     }
 
@@ -123,23 +132,151 @@ final class AppEnvironment {
         return store.lists.filter { active.contains($0.id) }
     }
 
-    /// Tasks after list-filter and search, in manual order.
-    var filteredTasks: [TaskItem] {
-        let active = activeListIDs
-        return store.tasks
-            .filter { active.contains($0.listID) }
-            .filter {
-                searchText.isEmpty
-                    || $0.title.localizedCaseInsensitiveContains(searchText)
-                    || ($0.notes ?? "").localizedCaseInsensitiveContains(searchText)
-            }
-            // Rank alone: it is seeded from priority on first sight, so an untouched
-            // board still reads high-priority-first, but a manual reorder is never
-            // undone by a re-fetch.
-            .sorted { $0.rank < $1.rank }
+    var week: [Day] { Scheduling.week(containing: weekAnchor) }
+
+    // MARK: - Derived slices
+    //
+    // Everything the boards read is derived from `store.tasks`, and none of it used to be
+    // cached. SwiftUI reads these repeatedly within a single body evaluation — `DayColumn`
+    // touches `tasks(on:)` four times, and each of those re-derived `backlog`, which
+    // re-derived `filteredTasks`, which filters and sorts the whole array. One render of
+    // the week board came to roughly 95 full traversals and 40 sorts.
+    //
+    // So they are computed together, once, behind a key naming everything they depend on.
+    // The key is all cheap scalars and sets, and reading it touches the same observable
+    // properties the old code did — so SwiftUI still invalidates exactly when it should.
+
+    private struct SliceKey: Equatable {
+        let dataRevision: Int
+        let focus: SidebarFocus
+        let selectedListIDs: Set<String>
+        let unscheduledListIDs: Set<String>
+        let searchText: String
+        let backlogSort: BacklogSort
+        let overdueSort: BacklogSort
+        let weekAnchor: Day
+        /// The board's idea of "now". Rolls the cache over at midnight rather than leaving
+        /// yesterday's buckets on screen.
+        let today: Day
     }
 
-    var week: [Day] { Scheduling.week(containing: weekAnchor) }
+    private struct Slices {
+        var filtered: [TaskItem] = []
+        var backlog: [TaskItem] = []
+        var backlogIDs: Set<String> = []
+        var overdue: [TaskItem] = []
+        var unscheduled: [TaskItem] = []
+        /// Tasks sitting on a day, backlog excluded.
+        var byDay: [Day: [TaskItem]] = [:]
+        /// Tasks whose span passes *through* a day without starting on it. Built only for
+        /// the visible week — a span can be arbitrarily long, and no other day is drawn.
+        var continuingByDay: [Day: [TaskItem]] = [:]
+        var todayCount = 0
+        var scheduledCount = 0
+        var allCount = 0
+        var countByList: [String: Int] = [:]
+    }
+
+    // Not observed: this is a memo of observable state, not state of its own. Observing it
+    // would loop, since it is written from inside the getters that read it.
+    @ObservationIgnored private var cacheKey: SliceKey?
+    @ObservationIgnored private var cache = Slices()
+
+    private var slices: Slices {
+        let key = SliceKey(
+            dataRevision: store.dataRevision,
+            focus: focus,
+            selectedListIDs: selectedListIDs,
+            unscheduledListIDs: unscheduledListIDs,
+            searchText: searchText,
+            backlogSort: backlogSort,
+            overdueSort: overdueSort,
+            weekAnchor: weekAnchor,
+            today: .today()
+        )
+        if key == cacheKey { return cache }
+        let built = buildSlices(key)
+        cacheKey = key
+        cache = built
+        return built
+    }
+
+    private func buildSlices(_ key: SliceKey) -> Slices {
+        var out = Slices()
+        let active = activeListIDs
+        let search = key.searchText
+        let today = key.today
+        // The Monday of the week containing *today*, not the week being displayed. The
+        // backlog is anchored to real time rather than to navigation, so paging forward to
+        // plan next week does not suddenly sweep this week's work into it.
+        let weekStart = Scheduling.week(containing: today).first ?? today
+
+        // Tasks after list-filter and search, in manual order.
+        //
+        // Rank alone: it is seeded from priority on first sight, so an untouched board
+        // still reads high-priority-first, but a manual reorder is never undone by a
+        // re-fetch.
+        out.filtered = store.tasks
+            .filter { active.contains($0.listID) }
+            .filter {
+                search.isEmpty
+                    || $0.title.localizedCaseInsensitiveContains(search)
+                    || ($0.notes ?? "").localizedCaseInsensitiveContains(search)
+            }
+            .sorted { $0.rank < $1.rank }
+
+        var backlog: [TaskItem] = []
+        var overdue: [TaskItem] = []
+        for task in out.filtered {
+            out.allCount += 1
+            if !task.isBacklog { out.scheduledCount += 1 }
+
+            guard !task.isCompleted else { continue }
+
+            if task.isOverdue(asOf: today) || (task.span?.contains(today) ?? false) {
+                out.todayCount += 1
+            }
+            if let day = task.boardDay, day < today { overdue.append(task) }
+
+            switch Scheduling.bucket(
+                plannedDay: task.plannedDay, dueDay: task.dueDay, currentWeekStart: weekStart
+            ) {
+            case .backlog:
+                backlog.append(task)
+            case .unscheduled:
+                if key.unscheduledListIDs.isEmpty || key.unscheduledListIDs.contains(task.listID) {
+                    out.unscheduled.append(task)
+                }
+            case .day:
+                break
+            }
+        }
+
+        out.backlog = key.backlogSort.sort(backlog)
+        out.overdue = key.overdueSort.sort(overdue)
+        out.backlogIDs = Set(backlog.map(\.id))
+
+        // Day buckets, in the same order `filtered` already has.
+        for task in out.filtered where !out.backlogIDs.contains(task.id) {
+            if let day = task.boardDay { out.byDay[day, default: []].append(task) }
+        }
+        for day in Scheduling.week(containing: key.weekAnchor) {
+            let passing = out.filtered.filter { task in
+                guard !out.backlogIDs.contains(task.id), let span = task.span else { return false }
+                return span.contains(day) && task.boardDay != day
+            }
+            if !passing.isEmpty { out.continuingByDay[day] = passing }
+        }
+
+        // Sidebar list counts run over *every* task, not the filtered set — the number
+        // beside a list should not change because you typed in the search box.
+        for task in store.tasks { out.countByList[task.listID, default: 0] += 1 }
+
+        return out
+    }
+
+    /// Tasks after list-filter and search, in manual order.
+    var filteredTasks: [TaskItem] { slices.filtered }
 
     // MARK: - Calendar overlay
 
@@ -195,56 +332,34 @@ final class AppEnvironment {
         events(on: day).filter { !$0.isAllDay }.reduce(0) { $0 + $1.durationMinutes }
     }
 
-    /// The Monday of the week containing *today* — not the week being displayed.
-    ///
-    /// The backlog is anchored to real time rather than to navigation, so paging forward
-    /// to plan next week does not suddenly sweep this week's work into it.
-    private var currentWeekStart: Day {
-        Scheduling.week(containing: .today()).first ?? .today()
-    }
-
     /// Dated work that slipped past the current week entirely.
     ///
     /// Something due this Monday when today is Tuesday is not backlog — it stays on
     /// Monday, where its column still reads as part of the week in progress. Only once
     /// the whole week has rolled past does it fall out into the backlog.
-    var backlog: [TaskItem] {
-        let start = currentWeekStart
-        return sortedByAge(filteredTasks.filter { task in
-            guard !task.isCompleted else { return false }
-            return Scheduling.bucket(
-                plannedDay: task.plannedDay, dueDay: task.dueDay, currentWeekStart: start
-            ) == .backlog
-        })
-    }
+    var backlog: [TaskItem] { slices.backlog }
 
-    func sortedByAge(_ tasks: [TaskItem]) -> [TaskItem] { backlogSort.sort(tasks) }
+    /// Dated work whose day has already gone — a missed deadline, or something planned for
+    /// a day now past.
+    ///
+    /// Deliberately **not** the same set as `backlog`, and the distinction is the point.
+    /// The Week board leaves something due this Monday sitting on Monday when today is
+    /// Tuesday, because the week in progress can still absorb it, and only sweeps up work
+    /// that slipped past the whole week. A Today board cannot do that: anything whose day
+    /// has gone has to resurface today or it is invisible. Two questions, so two names and
+    /// two sort preferences — one control governing both would be one control governing
+    /// two different sets.
+    var overdue: [TaskItem] { slices.overdue }
 
-    private var backlogIDs: Set<String> { Set(backlog.map(\.id)) }
-
-    func tasks(on day: Day) -> [TaskItem] {
-        let excluded = backlogIDs
-        return filteredTasks.filter { $0.boardDay == day && !excluded.contains($0.id) }
-    }
+    func tasks(on day: Day) -> [TaskItem] { slices.byDay[day] ?? [] }
 
     /// Multi-day tasks that pass *through* a day without starting on it, so a column can
     /// show them as continuation chips rather than losing them.
-    func continuing(on day: Day) -> [TaskItem] {
-        let excluded = backlogIDs
-        return filteredTasks.filter { task in
-            guard let span = task.span, span.contains(day) else { return false }
-            return task.boardDay != day && !excluded.contains(task.id)
-        }
-    }
+    func continuing(on day: Day) -> [TaskItem] { slices.continuingByDay[day] ?? [] }
 
     /// Tasks carrying no date at all — the pool you pull from when planning a week,
     /// narrowed to the lists you actually plan out of.
-    var unscheduled: [TaskItem] {
-        let allowed = unscheduledListIDs
-        return filteredTasks.filter {
-            $0.isBacklog && (allowed.isEmpty || allowed.contains($0.listID))
-        }
-    }
+    var unscheduled: [TaskItem] { slices.unscheduled }
 
     func jumpWeek(_ delta: Int) {
         weekAnchor = weekAnchor.adding(days: delta * 7)
@@ -358,20 +473,9 @@ final class AppEnvironment {
     // MARK: - Sidebar counts
 
     /// Everything owed today, matching what the Today board shows.
-    var todayCount: Int {
-        let today = Day.today()
-        return filteredTasks.filter { task in
-            guard !task.isCompleted else { return false }
-            if task.isOverdue() { return true }
-            if let span = task.span { return span.contains(today) }
-            return false
-        }.count
-    }
+    var todayCount: Int { slices.todayCount }
+    var scheduledCount: Int { slices.scheduledCount }
+    var allCount: Int { slices.allCount }
 
-    var scheduledCount: Int { filteredTasks.filter { !$0.isBacklog }.count }
-    var allCount: Int { filteredTasks.count }
-
-    func count(for list: TaskList) -> Int {
-        store.tasks.filter { $0.listID == list.id }.count
-    }
+    func count(for list: TaskList) -> Int { slices.countByList[list.id] ?? 0 }
 }

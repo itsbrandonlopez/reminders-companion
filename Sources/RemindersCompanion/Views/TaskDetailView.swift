@@ -493,20 +493,22 @@ struct TaskDetailView: View {
 
     /// Text commits on Done rather than per keystroke — every write round-trips to EventKit
     /// and refetches, which would be unusable while typing.
+    ///
+    /// All three fields go in one call: as three separate `Task`s this was three commits and
+    /// three full refetches per click, in no guaranteed order.
     private func commitAll() {
-        commitTitle()
-        commitNotes()
-        commitURL()
+        let newTitle = title != task.title ? title : nil
+        let newNotes = notes != (task.notes ?? "") ? notes : nil
+        let newURL = urlText != (task.url?.absoluteString ?? "") ? urlText : nil
+        guard newTitle != nil || newNotes != nil || newURL != nil else { return }
+        Task { await env.store.setFields(task, title: newTitle, notes: newNotes, url: newURL) }
     }
 
+    /// The title field also commits on Enter, which is the one field worth writing early —
+    /// it is the task's identity and the most likely thing to be retyped.
     private func commitTitle() {
         guard title != task.title else { return }
         Task { await env.store.setTitle(task, title) }
-    }
-
-    private func commitNotes() {
-        guard notes != (task.notes ?? "") else { return }
-        Task { await env.store.setNotes(task, notes) }
     }
 
     private func commitURL() {

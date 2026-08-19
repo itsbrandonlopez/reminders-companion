@@ -48,8 +48,12 @@ targets:
       path: Sources/RemindersCompanionMobile/Info.plist
       properties:
         CFBundleDisplayName: Companion
-        CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "1"
+        # Taken from the build settings rather than written out again. These were literals
+        # ("1.0" / "1") and drifted away from both MARKETING_VERSION and the repo's tags,
+        # which is how the shipped app came to report a different version from the release
+        # it was built from.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
         CFBundleURLTypes:
           - CFBundleURLSchemes:
@@ -73,7 +77,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.brandonlopez.RemindersCompanionMobile
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.3.0"
         # App Store Connect requires each upload to carry a higher build number than the
         # last, within a given marketing version. Bump with ./bump-build.sh before
         # archiving, not by hand.
@@ -117,7 +121,7 @@ targets:
         # Apple requires an extension's marketing version to match its containing app's.
         # bump-build.sh's build-number substitution matches this line too, since it
         # patches every CURRENT_PROJECT_VERSION occurrence in the file.
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.3.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: NO
@@ -157,7 +161,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.brandonlopez.RemindersCompanionMobile.watchkitapp
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.3.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: NO
@@ -188,7 +192,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.brandonlopez.RemindersCompanionMobile.watchkitapp.widgets
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.3.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: NO

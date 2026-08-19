@@ -36,4 +36,34 @@ public enum Ranking {
     public static func normalized(count: Int) -> [Double] {
         (0..<count).map { Double($0) * step }
     }
+
+    /// Renumbers an exhausted column and reports where the drop target's neighbours ended
+    /// up.
+    ///
+    /// This is the half of the recovery path that is easy to get wrong. Once the column has
+    /// been respread, the *old* neighbour ranks describe positions that no longer exist —
+    /// subdividing between them lands the card at an arbitrary point near the top rather
+    /// than where it was dropped. The replacement rank has to come from the new values, so
+    /// this returns them alongside the renumbering rather than leaving the caller to look
+    /// them up again.
+    ///
+    /// Pure, and separate from `ReminderStore.reorder`, so the rule can be tested without a
+    /// sidecar or an EventKit store behind it.
+    ///
+    /// - Parameters:
+    ///   - column: every id in the column the drop happened in, already in display order.
+    ///   - above: the id the card was dropped below, if any.
+    ///   - below: the id the card was dropped above, if any.
+    /// - Returns: the new rank for every id, plus the post-respread ranks of the two
+    ///   neighbours — ready to hand straight to `between`.
+    public static func respread(
+        _ column: [String], above: String?, below: String?
+    ) -> (ranks: [String: Double], above: Double?, below: Double?) {
+        var ranks: [String: Double] = [:]
+        ranks.reserveCapacity(column.count)
+        for (id, rank) in zip(column, normalized(count: column.count)) {
+            ranks[id] = rank
+        }
+        return (ranks, above.flatMap { ranks[$0] }, below.flatMap { ranks[$0] })
+    }
 }

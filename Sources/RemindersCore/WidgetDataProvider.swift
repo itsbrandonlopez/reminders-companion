@@ -1,5 +1,4 @@
 import EventKit
-import RemindersCore
 import Foundation
 
 /// The widget's own read path.
@@ -68,8 +67,13 @@ public enum WidgetDataProvider {
     ///
     /// Previously this also swept in every overdue task, which meant the widget's count
     /// and the app's Today tab openly disagreed on the same screen. Overdue work is
-    /// surfaced separately via `overdueCount()`, exactly as the app surfaces it as a
-    /// "N past due" banner.
+    /// surfaced separately, via `overdueCount()`.
+    ///
+    /// Note that `overdueCount()` is deliberately *not* the number behind the phone app's
+    /// backlog banner. That banner counts work which slipped past the whole current week
+    /// (`MobileEnvironment.backlogCount`); this counts every deadline already in the past.
+    /// A widget is a glance with no room to explain a week-boundary rule, so it answers the
+    /// simpler question — but the two are different sets and the labels say so.
     public static func fetchToday() async -> [TaskItem] {
         let today = Day.today()
         return await fetchTasks().filter { $0.boardDay == today }
@@ -93,5 +97,44 @@ public enum WidgetDataProvider {
 
     public static func overdueCount() async -> Int {
         await fetchTasks().filter { $0.isOverdue() }.count
+    }
+
+    /// Everything a widget or complication needs, from **one** fetch.
+    ///
+    /// The granular calls above each build their own `EKEventStore` and run their own
+    /// unbounded fetch, so a timeline entry assembled from three of them did the whole job
+    /// three times — in a short-lived, memory-capped extension process, which on watchOS is
+    /// the tightest budget in the system. Every timeline provider uses this; the granular
+    /// calls remain for the diagnostics, which deliberately exercise them in isolation.
+    public static func snapshot() async -> Snapshot {
+        let all = await fetchTasks()
+        let today = Day.today()
+        return Snapshot(
+            today: all.filter { $0.boardDay == today },
+            next: all
+                .filter { $0.boardDay != nil }
+                .min { lhs, rhs in
+                    let l = lhs.boardDay ?? today
+                    let r = rhs.boardDay ?? today
+                    if l != r { return l < r }
+                    return lhs.priority.sortWeight < rhs.priority.sortWeight
+                },
+            overdueCount: all.filter { $0.isOverdue(asOf: today) }.count
+        )
+    }
+
+    public struct Snapshot: Sendable {
+        /// Today's work, by the same rule as the app's Today tab.
+        public let today: [TaskItem]
+        /// The nearest dated task by **date**, priority breaking ties on the same day.
+        public let next: TaskItem?
+        /// Every deadline already in the past — not just the ones falling on today.
+        public let overdueCount: Int
+
+        public init(today: [TaskItem], next: TaskItem?, overdueCount: Int) {
+            self.today = today
+            self.next = next
+            self.overdueCount = overdueCount
+        }
     }
 }

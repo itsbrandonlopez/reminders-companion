@@ -63,9 +63,12 @@ public struct CalendarEvent: Identifiable, Hashable, Sendable {
     public func timeLabel(on day: Day, in timeZone: TimeZone = .current) -> String {
         if isAllDay { return "All day" }
 
+        // Copied rather than shared: this one needs the caller's timezone, and mutating
+        // the shared formatter would race every other reader of it.
         let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.setLocalizedDateFormatFromTemplate("jmm")
         formatter.timeZone = timeZone
-        formatter.dateFormat = "h:mm a"
 
         let span = days(in: timeZone)
         let startsHere = span.lowerBound == day

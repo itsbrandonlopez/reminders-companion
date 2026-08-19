@@ -72,6 +72,26 @@ final class QuickAddParserTests: XCTestCase {
         XCTAssertEqual(r.title, "Track issue # 42")
     }
 
+    /// The case that used to corrupt titles. Issue, invoice and order numbers are written
+    /// exactly like a list token, and eating them left a token matching no list, a task in
+    /// the default list anyway, and a title quietly missing the only part that identified
+    /// it. Same principle as the mid-sentence date rule: a wrong guess is worse than none.
+    func testNumericHashTokenStaysInTheTitle() {
+        for input in ["Fix login bug #423", "Chase invoice #7", "Pick up order #00912"] {
+            let r = parse(input)
+            XCTAssertNil(r.listToken, "\(input) should not name a list")
+            XCTAssertEqual(r.title, input, "\(input) must survive intact")
+        }
+    }
+
+    /// A token only has to *contain* a letter, so real list names that carry digits still
+    /// work — this must not overcorrect into rejecting them.
+    func testListTokensWithDigitsStillResolve() {
+        XCTAssertEqual(parse("Ship it #q4").listToken, "q4")
+        XCTAssertEqual(parse("Ship it #2026goals").listToken, "2026goals")
+        XCTAssertEqual(parse("Ship it #q4").title, "Ship it")
+    }
+
     func testListMatchingIgnoresCaseSpacesAndDiacritics() {
         let lists = [
             TaskList(id: "1", title: "Café Lopez", color: .neutral, isEditable: true, isDefault: false),

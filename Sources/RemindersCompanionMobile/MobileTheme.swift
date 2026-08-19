@@ -43,30 +43,5 @@ enum Palette {
     static let flag    = Color.dynamic(light: hex(0xE8A33D), dark: hex(0xF0B152))
 }
 
-extension Day {
-    var weekdayName: String {
-        let f = DateFormatter(); f.dateFormat = "EEEE"
-        return f.string(from: startOfDay())
-    }
-
-    var shortWeekday: String {
-        let f = DateFormatter(); f.dateFormat = "EEE"
-        return f.string(from: startOfDay())
-    }
-
-    var monthDayLabel: String {
-        let f = DateFormatter(); f.dateFormat = "MMM d"
-        return f.string(from: startOfDay())
-    }
-
-    var isToday: Bool { self == Day.today() }
-    var isPast: Bool { self < Day.today() }
-
-    /// "Today" and "Tomorrow" read far better than a date on a phone.
-    var relativeName: String {
-        if isToday { return "Today" }
-        if self == Day.today().adding(days: 1) { return "Tomorrow" }
-        if self == Day.today().adding(days: -1) { return "Yesterday" }
-        return weekdayName
-    }
-}
+// `Day`'s labels now live in `RemindersCore.DateLabels`, shared with the Mac and the
+// widgets. See the note in the Mac's Theme.swift.

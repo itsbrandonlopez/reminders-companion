@@ -46,8 +46,8 @@ public enum QuickAddParser {
         for word in words {
             if let priority = priorityToken(word), result.priority == nil {
                 result.priority = priority
-            } else if word.hasPrefix("#"), word.count > 1, result.listToken == nil {
-                result.listToken = String(word.dropFirst())
+            } else if let list = listToken(word), result.listToken == nil {
+                result.listToken = list
             } else {
                 kept.append(word)
             }
@@ -90,6 +90,23 @@ public enum QuickAddParser {
         case 2: return .medium
         default: return .high
         }
+    }
+
+    // MARK: - List
+
+    /// `#freelance` names a list. `#423` does not.
+    ///
+    /// A list token must contain a letter. Issue numbers, invoice numbers and order numbers
+    /// are written exactly like this — "Fix login bug #423", "Chase invoice #7" — and
+    /// treating them as list names silently ate them out of the title, leaving a token that
+    /// matches nothing and a task filed in the default list anyway. That is the same damage
+    /// the edge-anchoring rule exists to prevent for date words: a wrong guess is worse than
+    /// no guess, because it is invisible until you go looking for the task.
+    private static func listToken(_ word: String) -> String? {
+        guard word.hasPrefix("#") else { return nil }
+        let token = String(word.dropFirst())
+        guard token.contains(where: \.isLetter) else { return nil }
+        return token
     }
 
     // MARK: - Dates

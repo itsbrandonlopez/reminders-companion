@@ -146,7 +146,7 @@ swift test
 
 One core, four surfaces — nothing carries its own copy of the domain logic.
 
-- **`Sources/RemindersCore`** — no UI, 143 unit tests, builds for macOS, iOS and watchOS.
+- **`Sources/RemindersCore`** — no UI, 152 unit tests, builds for macOS, iOS and watchOS.
   `ReminderStore` is the only type that touches EventKit; `Scheduling` owns every date
   conversion; `QuickAddParser`, `Ranking` and the SwiftData sidecar live here too.
 - **`Sources/RemindersCompanion`** — the Mac app: week board, kanban Today, folders,

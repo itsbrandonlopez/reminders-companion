@@ -193,7 +193,3 @@ private struct DaySectionHeader: View {
         .padding(.vertical, 2)
     }
 }
-
-private extension Day {
-    var dayNumber: String { String(day) }
-}
