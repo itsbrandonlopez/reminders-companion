@@ -89,6 +89,31 @@ public enum Scheduling {
         return plannedComponents(for: day, alongside: due)
     }
 
+    /// Adds or removes the wall-clock time on a set of date components.
+    ///
+    /// Setting a time is what makes a reminder non-all-day. Clearing it must drop the
+    /// timezone too, not just the hour: an all-day date in Reminders is a *floating* date
+    /// with a nil timezone, and leaving a stale timezone behind produces a date that
+    /// drifts when the machine moves.
+    public static func settingTime(
+        on components: DateComponents?, hour: Int?, minute: Int?
+    ) -> DateComponents? {
+        guard var c = components else { return nil }
+        c.calendar = Day.gregorian
+        if let hour, let minute {
+            c.timeZone = c.timeZone ?? .current
+            c.hour = hour
+            c.minute = minute
+            c.second = 0
+        } else {
+            c.timeZone = nil
+            c.hour = nil
+            c.minute = nil
+            c.second = nil
+        }
+        return c
+    }
+
     /// The day a task should appear under on the week board.
     ///
     /// Planned day wins when present — that is the whole point of the start/due split.

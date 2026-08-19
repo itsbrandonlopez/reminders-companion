@@ -85,6 +85,36 @@ enum SelfTest {
         await store.refresh()
         check("deleted", !store.tasks.contains { $0.id == created.id })
 
+        // Tranche 1 detail fields. The due-time toggle is the one that matters: writing a
+        // time makes the item non-all-day, and the original spike showed that getting the
+        // start date's timed-ness wrong silently strips the time straight back off.
+        await store.create(title: "Detail probe", in: list.id, on: .today())
+        await store.refresh()
+        if var probe = store.tasks.first(where: { $0.title == "Detail probe" }) {
+            await store.setURL(probe, "https://example.com/brief")
+            probe = store.tasks.first { $0.id == probe.id } ?? probe
+            check("url round-trips", probe.url?.absoluteString == "https://example.com/brief")
+
+            await store.setDueDay(probe, to: Day.today().adding(days: 3))
+            probe = store.tasks.first { $0.id == probe.id } ?? probe
+            check("deadline set as all-day", probe.dueDay != nil && !probe.dueIsTimed)
+
+            await store.setDueTime(probe, hour: 9, minute: 30)
+            probe = store.tasks.first { $0.id == probe.id } ?? probe
+            let kept = probe.dueDay == Day.today().adding(days: 3)
+            check("time added, day unchanged", probe.dueIsTimed && kept,
+                  "\(probe.dueTimeLabel ?? "no time") on \(probe.dueDay?.description ?? "nil")")
+
+            await store.setDueTime(probe, hour: nil, minute: nil)
+            probe = store.tasks.first { $0.id == probe.id } ?? probe
+            check("time cleared, day survives",
+                  !probe.dueIsTimed && probe.dueDay == Day.today().adding(days: 3))
+
+            await store.delete(probe)
+        } else {
+            check("detail probe created", false)
+        }
+
         let failures = log.filter { $0.contains("✗") }.count
         log.append("── \(failures == 0 ? "all checks passed" : "\(failures) FAILED") ──")
         return log.joined(separator: "\n")

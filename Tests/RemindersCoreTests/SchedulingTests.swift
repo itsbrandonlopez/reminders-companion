@@ -329,3 +329,85 @@ final class IOSStartDateRequirementTests: XCTestCase {
         XCTAssertNil(Scheduling.startDateSatisfyingDueDate(nil))
     }
 }
+
+/// Adding or removing the time on a deadline. This is the field the original spike showed
+/// is dangerous: `allDay` belongs to the reminder rather than to each date, so the time and
+/// the timezone have to move together or a deadline silently loses its time.
+final class SettingTimeTests: XCTestCase {
+
+    private func allDay(day: Int = 20) -> DateComponents {
+        var c = DateComponents()
+        c.calendar = Day.gregorian
+        c.year = 2026; c.month = 8; c.day = day
+        return c
+    }
+
+    private func timed(hour: Int = 9) -> DateComponents {
+        var c = allDay()
+        c.timeZone = TimeZone(identifier: "America/New_York")
+        c.hour = hour; c.minute = 30; c.second = 0
+        return c
+    }
+
+    func testAddingATimeAlsoAddsATimeZone() {
+        // A timed date with no timezone is ambiguous; Reminders writes one.
+        let r = Scheduling.settingTime(on: allDay(), hour: 14, minute: 5)
+        XCTAssertEqual(r?.hour, 14)
+        XCTAssertEqual(r?.minute, 5)
+        XCTAssertEqual(r?.second, 0)
+        XCTAssertNotNil(r?.timeZone)
+        XCTAssertTrue(Scheduling.isTimed(r))
+    }
+
+    func testAddingATimeKeepsTheDay() {
+        let r = Scheduling.settingTime(on: allDay(day: 24), hour: 8, minute: 0)
+        XCTAssertEqual(Day(r), Day(year: 2026, month: 8, day: 24))
+    }
+
+    func testAnExistingTimeZoneIsPreserved() {
+        let r = Scheduling.settingTime(on: timed(), hour: 18, minute: 45)
+        XCTAssertEqual(r?.timeZone?.identifier, "America/New_York")
+        XCTAssertEqual(r?.hour, 18)
+    }
+
+    /// Clearing must drop the timezone too. Leaving a stale one behind produces a date
+    /// that drifts when the machine changes timezone — the exact failure floating dates
+    /// exist to avoid.
+    func testClearingRemovesTheTimeAndTheTimeZone() {
+        let r = Scheduling.settingTime(on: timed(), hour: nil, minute: nil)
+        XCTAssertNil(r?.hour)
+        XCTAssertNil(r?.minute)
+        XCTAssertNil(r?.second)
+        XCTAssertNil(r?.timeZone)
+        XCTAssertFalse(Scheduling.isTimed(r))
+    }
+
+    func testClearingKeepsTheDay() {
+        let r = Scheduling.settingTime(on: timed(), hour: nil, minute: nil)
+        XCTAssertEqual(Day(r), Day(year: 2026, month: 8, day: 20))
+    }
+
+    func testNilComponentsStayNil() {
+        XCTAssertNil(Scheduling.settingTime(on: nil, hour: 9, minute: 0))
+    }
+
+    func testAlwaysCarriesGregorianCalendar() {
+        // EventKit raises for any other calendar identifier.
+        XCTAssertEqual(
+            Scheduling.settingTime(on: allDay(), hour: 9, minute: 0)?.calendar?.identifier,
+            .gregorian
+        )
+    }
+
+    /// Round-tripping must land back on a genuine all-day date, not one carrying leftovers.
+    func testTimeCanBeAddedAndRemovedRepeatedly() {
+        var c: DateComponents? = allDay()
+        for _ in 0..<3 {
+            c = Scheduling.settingTime(on: c, hour: 7, minute: 15)
+            XCTAssertTrue(Scheduling.isTimed(c))
+            c = Scheduling.settingTime(on: c, hour: nil, minute: nil)
+            XCTAssertFalse(Scheduling.isTimed(c))
+        }
+        XCTAssertEqual(Day(c), Day(year: 2026, month: 8, day: 20))
+    }
+}

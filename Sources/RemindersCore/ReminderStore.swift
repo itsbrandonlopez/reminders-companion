@@ -484,6 +484,36 @@ public final class ReminderStore {
         await mutate(task) { $0.notes = trimmed.isEmpty ? nil : trimmed }
     }
 
+    public func setURL(_ task: TaskItem, _ urlString: String) async {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        await mutate(task) { $0.url = trimmed.isEmpty ? nil : URL(string: trimmed) }
+    }
+
+    /// Sets or clears the wall-clock time on the deadline, keeping the day it already has.
+    ///
+    /// Writing a time is what makes a reminder non-all-day, which is the distinction the
+    /// original spike turned up: `allDay` belongs to the item rather than to each date, so
+    /// a timed deadline needs a timed start alongside it or the time is silently stripped.
+    /// `satisfyStartDateRequirement` and `Scheduling.plannedComponents` between them keep
+    /// that invariant.
+    public func setDueTime(_ task: TaskItem, hour: Int?, minute: Int?) async {
+        await mutate(task) { reminder in
+            guard let due = Scheduling.settingTime(
+                on: reminder.dueDateComponents, hour: hour, minute: minute
+            ) else { return }
+            reminder.dueDateComponents = due
+
+            // The planned day must follow the deadline's timed-ness or the all-day
+            // coercion strips the time straight back off.
+            if let plannedDay = Day(reminder.startDateComponents) {
+                reminder.startDateComponents = Scheduling.plannedComponents(
+                    for: plannedDay, alongside: due
+                )
+            }
+            satisfyStartDateRequirement(on: reminder)
+        }
+    }
+
     /// Sets or clears the deadline directly, preserving any time of day already on it.
     ///
     /// Distinct from `setSpanEnd`, which is the drag gesture and refuses to move a

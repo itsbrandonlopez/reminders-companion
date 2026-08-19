@@ -4,6 +4,36 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Task details
+
+### Added
+
+- **Editable time of day on a deadline.** Previously read-only with "Time of day is set in
+  Reminders". A "Deadline" row now reveals an "At a time" toggle and a time picker, and
+  clearing it returns the task to a genuine all-day date rather than one carrying leftovers.
+- **Editable URL.**
+
+### Changed
+
+- **The detail panel now follows Reminders' own info popover**: plain free-text fields at
+  the top, then date rows, then the menus — labels on the left, controls on the right,
+  hairline separators instead of boxed fields. Nobody should have to learn a second layout
+  for the same information. "Plan for" keeps a distinct name because a do-date is this
+  app's idea and Reminders has no equivalent.
+
+### Notes
+
+- **Location was built, verified, and removed.** `EKCalendarItem.location` exists and
+  EventKit accepts a value, but iCloud silently discards it for reminders — confirmed by
+  writing it directly onto a live `EKReminder`, saving, and finding it gone on refetch from
+  an independent store. It works for calendar *events*, which share the superclass. A field
+  that quietly eats what you type is worse than no field.
+- Setting a due *time* is the one field that touches the all-day coercion rule from the
+  original spike, so the logic lives in `Scheduling.settingTime` as pure, tested code:
+  clearing a time must drop the timezone too, or the date drifts when the machine moves.
+- Alarms and repeat rules remain shown but not editable. They are the two things the user
+  trusts Reminders for, and each gets its own verified pass rather than riding along here.
+
 ## [Unreleased] — Watch audit fixes
 
 An audit of the Watch work found seven issues, two of which would have shipped broken.

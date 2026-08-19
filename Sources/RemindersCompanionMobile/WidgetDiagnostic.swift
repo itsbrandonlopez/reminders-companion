@@ -73,6 +73,44 @@ enum WidgetDiagnostic {
         log.append(await quickAddChecks(env: env))
         log.append("")
         log.append(await undoChecks(env: env))
+        log.append("")
+        log.append(await detailFieldChecks(env: env))
+        return log.joined(separator: "\n")
+    }
+
+    /// Tranche-1 detail fields. The due-time toggle is the one that matters: writing a time
+    /// makes the item non-all-day, and the original spike showed that getting the start
+    /// date's timed-ness wrong silently strips the time straight back off.
+    private static func detailFieldChecks(env: MobileEnvironment) async -> String {
+        var log = ["── Detail fields diagnostic ──"]
+        guard let list = env.store.lists.first(where: { $0.title == ReminderStore.sampleListName })
+                ?? env.store.lists.first(where: \.isEditable) else { return "  ✗ no editable list" }
+
+        let title = "Detail probe \(UUID().uuidString.prefix(6))"
+        await env.store.create(title: title, in: list.id, on: .today())
+        await env.store.refresh()
+        guard var p = env.store.tasks.first(where: { $0.title == title }) else {
+            return "  ✗ could not create the probe"
+        }
+        func reload() { p = env.store.tasks.first { $0.id == p.id } ?? p }
+
+
+        await env.store.setURL(p, "https://example.com/brief"); reload()
+        log.append("  url: \(p.url?.absoluteString ?? "nil")  \(p.url?.absoluteString == "https://example.com/brief" ? "✓" : "✗")")
+
+        let target = Day.today().adding(days: 3)
+        await env.store.setDueDay(p, to: target); reload()
+        log.append("  deadline all-day: \(p.dueDay?.description ?? "nil") timed=\(p.dueIsTimed)  \(p.dueDay == target && !p.dueIsTimed ? "✓" : "✗")")
+
+        await env.store.setDueTime(p, hour: 9, minute: 30); reload()
+        let timeOK = p.dueIsTimed && p.dueDay == target
+        log.append("  + time 09:30: \(p.dueTimeLabel ?? "none") on \(p.dueDay?.description ?? "nil")  \(timeOK ? "✓" : "✗ time or day lost")")
+
+        await env.store.setDueTime(p, hour: nil, minute: nil); reload()
+        let clearedOK = !p.dueIsTimed && p.dueDay == target
+        log.append("  time cleared: timed=\(p.dueIsTimed) day=\(p.dueDay?.description ?? "nil")  \(clearedOK ? "✓" : "✗")")
+
+        await env.store.delete(p)
         return log.joined(separator: "\n")
     }
 
