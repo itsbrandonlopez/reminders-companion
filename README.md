@@ -144,15 +144,25 @@ swift test
 
 ## How it's put together
 
-- **`Sources/RemindersCore`** — no UI, fully unit-tested. `ReminderStore` is the only type
-  that touches EventKit; `Scheduling` owns every date conversion; `Ranking` does fractional
-  indexing for manual order.
-- **`Sources/RemindersCompanion`** — the SwiftUI app.
+One core, four surfaces — nothing carries its own copy of the domain logic.
+
+- **`Sources/RemindersCore`** — no UI, 143 unit tests, builds for macOS, iOS and watchOS.
+  `ReminderStore` is the only type that touches EventKit; `Scheduling` owns every date
+  conversion; `QuickAddParser`, `Ranking` and the SwiftData sidecar live here too.
+- **`Sources/RemindersCompanion`** — the Mac app: week board, kanban Today, folders,
+  calendar overlay.
+- **`Sources/RemindersCompanionMobile`** — the iPhone companion, plus
+  **`…Widgets`** for Home and Lock Screen.
+- **`Sources/RemindersCompanionWatch`** and **`…WatchWidgets`** — the Watch app and its
+  complications.
+- **`Sources/RemindersShared`** — the WatchConnectivity bridge, iOS and watchOS only, so
+  the Mac never links a framework it has no use for.
 - **`spike/`** — the throwaway probe that answered what Reminders can actually do, and the
   findings that came out of it.
 
-More detail in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and
-[`CHANGELOG.md`](CHANGELOG.md).
+The full architecture — all four surfaces, what each platform permits, and the invariants
+that keep them consistent — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Changes are in [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
