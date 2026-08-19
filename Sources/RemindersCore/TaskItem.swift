@@ -69,6 +69,10 @@ public struct TaskItem: Identifiable, Hashable, Sendable {
     public var isCompleted: Bool
     public var hasAlarms: Bool
     public var isRecurring: Bool
+    /// Every alarm on the reminder, classified by whether this app can express it.
+    public var alarms: [AlarmShape]
+    /// The repeat rule, if any, and whether it is safe to edit here.
+    public var recurrence: RecurrenceShape?
 
     /// The planned day — `startDateComponents`. What dragging a card writes.
     public var plannedDay: Day?
@@ -88,6 +92,7 @@ public struct TaskItem: Identifiable, Hashable, Sendable {
         listID: String, listName: String, listColor: RGBA,
         priority: Priority = .none, isCompleted: Bool = false,
         hasAlarms: Bool = false, isRecurring: Bool = false,
+        alarms: [AlarmShape] = [], recurrence: RecurrenceShape? = nil,
         plannedDay: Day? = nil, dueDay: Day? = nil, dueIsTimed: Bool = false,
         dueDate: Date? = nil, rank: Double = 0, estimateMinutes: Int? = nil
     ) {
@@ -95,6 +100,7 @@ public struct TaskItem: Identifiable, Hashable, Sendable {
         self.listID = listID; self.listName = listName; self.listColor = listColor
         self.priority = priority; self.isCompleted = isCompleted
         self.hasAlarms = hasAlarms; self.isRecurring = isRecurring
+        self.alarms = alarms; self.recurrence = recurrence
         self.plannedDay = plannedDay; self.dueDay = dueDay; self.dueIsTimed = dueIsTimed
         self.dueDate = dueDate; self.rank = rank; self.estimateMinutes = estimateMinutes
     }

@@ -241,12 +241,62 @@ public final class ReminderStore {
             isCompleted: reminder.isCompleted,
             hasAlarms: !(reminder.alarms ?? []).isEmpty,
             isRecurring: reminder.hasRecurrenceRules,
+            alarms: (reminder.alarms ?? []).map(alarmShape),
+            recurrence: reminder.recurrenceRules?.first.map(recurrenceShape),
             plannedDay: Day(reminder.startDateComponents),
             dueDay: Day(due),
             dueIsTimed: Scheduling.isTimed(due),
             dueDate: due.flatMap { Day.gregorian.date(from: $0) },
             rank: rank,
             estimateMinutes: estimateMinutes
+        )
+    }
+
+    /// Classifies an alarm so the UI knows whether it may be replaced.
+    nonisolated static func alarmShape(_ alarm: EKAlarm) -> AlarmShape {
+        if let location = alarm.structuredLocation, alarm.proximity != .none {
+            return .location(
+                title: location.title ?? "a location",
+                isEntering: alarm.proximity == .enter
+            )
+        }
+        if let absolute = alarm.absoluteDate { return .absolute(absolute) }
+        return .relative(alarm.relativeOffset)
+    }
+
+    /// Classifies a repeat rule, recording whether it carries anything beyond
+    /// frequency/interval/end — which is what makes it unsafe for this app to rewrite.
+    nonisolated static func recurrenceShape(_ rule: EKRecurrenceRule) -> RecurrenceShape {
+        let frequency: RecurrenceFrequency = switch rule.frequency {
+        case .daily: .daily
+        case .weekly: .weekly
+        case .monthly: .monthly
+        case .yearly: .yearly
+        @unknown default: .daily
+        }
+
+        let end: RecurrenceEnd = if let recurrenceEnd = rule.recurrenceEnd {
+            if let date = recurrenceEnd.endDate {
+                .onDate(Day(date))
+            } else {
+                .afterCount(recurrenceEnd.occurrenceCount)
+            }
+        } else {
+            .never
+        }
+
+        let positional = !(rule.daysOfTheWeek ?? []).isEmpty
+            || !(rule.daysOfTheMonth ?? []).isEmpty
+            || !(rule.monthsOfTheYear ?? []).isEmpty
+            || !(rule.weeksOfTheYear ?? []).isEmpty
+            || !(rule.daysOfTheYear ?? []).isEmpty
+            || !(rule.setPositions ?? []).isEmpty
+
+        return RecurrenceShape(
+            frequency: frequency,
+            interval: rule.interval,
+            end: end,
+            hasPositionalSpecifiers: positional
         )
     }
 
@@ -467,6 +517,71 @@ public final class ReminderStore {
     }
 
     public func dismissUndo() { undoable = nil }
+
+    /// Replaces the repeat rule, or clears it when `rule` is nil.
+    ///
+    /// Refuses outright when the existing rule carries specifiers this app cannot express
+    /// (days of the week, set positions and so on). The UI does not offer the control in
+    /// that case, but the guard lives here too so no future caller can quietly discard
+    /// part of a rule the user built in Reminders.
+    @discardableResult
+    public func setRecurrence(_ task: TaskItem, _ rule: SimpleRecurrence?) async -> Bool {
+        if let existing = task.recurrence, !existing.isEditableHere {
+            lastError = "That repeat rule is more detailed than this app can edit. Change it in Reminders."
+            return false
+        }
+        // A repeat rule is anchored to the deadline. Verified against live EventKit: adding
+        // one to a reminder with no due date is accepted in memory and silently dropped on
+        // save, so refusing loudly beats appearing to work.
+        if rule != nil, task.dueDay == nil {
+            lastError = "Set a deadline before making “\(task.title)” repeat — a repeat needs a date to repeat from."
+            return false
+        }
+        await mutate(task) { reminder in
+            for existing in reminder.recurrenceRules ?? [] {
+                reminder.removeRecurrenceRule(existing)
+            }
+            guard let rule else { return }
+
+            let frequency: EKRecurrenceFrequency = switch rule.frequency {
+            case .daily: .daily
+            case .weekly: .weekly
+            case .monthly: .monthly
+            case .yearly: .yearly
+            }
+            let end: EKRecurrenceEnd? = switch rule.end {
+            case .never: nil
+            case let .onDate(day): EKRecurrenceEnd(end: day.startOfDay())
+            case let .afterCount(n): EKRecurrenceEnd(occurrenceCount: max(1, n))
+            }
+            reminder.addRecurrenceRule(
+                EKRecurrenceRule(recurrenceWith: frequency, interval: rule.interval, end: end)
+            )
+        }
+        return true
+    }
+
+    /// Sets a single absolute alarm, or clears all alarms when `date` is nil.
+    ///
+    /// Refuses when any existing alarm is a geofence: this app has no way to rebuild one,
+    /// so replacing it would silently turn "remind me when I get to the studio" into a
+    /// fixed time, or into nothing at all.
+    @discardableResult
+    public func setAlarm(_ task: TaskItem, at date: Date?) async -> Bool {
+        if task.alarms.contains(where: { !$0.isEditableHere }) {
+            lastError = "That reminder has a location alert this app can't edit. Change it in Reminders."
+            return false
+        }
+        await mutate(task) { reminder in
+            for existing in reminder.alarms ?? [] {
+                reminder.removeAlarm(existing)
+            }
+            if let date {
+                reminder.addAlarm(EKAlarm(absoluteDate: date))
+            }
+        }
+        return true
+    }
 
     public func setPriority(_ task: TaskItem, _ priority: Priority) async {
         await mutate(task) { $0.priority = priority.rawValue }

@@ -4,6 +4,37 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Alerts and repeat rules
+
+### Added
+
+- **Editable notification and repeat rows** on the Mac detail panel, matching Reminders'
+  own "Remind me" and "Repeat" controls.
+- **A confirmation before overriding Reminders.** Changing an alert or a repeat rule the
+  user already set up asks first and says plainly that the old one will be replaced. It
+  appears only when something is actually being replaced — adding an alert to a task that
+  had none is not destructive and does not interrupt.
+- Cancelling the confirmation puts the toggles back where the reminder actually is, rather
+  than leaving the UI claiming a change that never happened.
+
+### Notes
+
+- **This app refuses to edit rules it cannot faithfully express.** An `EKRecurrenceRule`
+  can specify days of the week, days of the month, set positions and more — "the second
+  Tuesday of every month". This editor covers frequency, interval and an end, so anything
+  richer is shown with a lock and a pointer to Reminders instead. Overwriting it would have
+  quietly turned that rule into "every 2 months" with nothing on screen to reveal the loss.
+  A confirmation dialog alone would not have prevented this: the user would have clicked
+  through it without knowing what was being discarded. Verified end to end by writing a
+  positional rule with EventKit directly and confirming the app detects it, refuses, and
+  leaves it intact.
+- The same applies to **location-based alerts**: a geofence carries coordinates, a radius
+  and an enter/leave direction this app has no UI to rebuild, so it is displayed and left
+  alone.
+- **A repeat rule needs a deadline.** Verified: adding one to a reminder with no due date
+  is accepted in memory and silently discarded on save. The store now refuses with an
+  explanation and the row says "Needs a deadline" rather than appearing to work.
+
 ## [Unreleased] — Task details
 
 ### Added

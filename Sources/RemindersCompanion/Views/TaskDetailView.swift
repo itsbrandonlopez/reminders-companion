@@ -31,6 +31,26 @@ struct TaskDetailView: View {
     @State private var hasDueTime = false
     @State private var dueTime = Date()
     @State private var didLoad = false
+    @State private var hasAlarm = false
+    @State private var alarmDate = Date()
+    @State private var repeats = false
+    @State private var frequency: RecurrenceFrequency = .weekly
+    @State private var interval = 1
+    /// Set when an edit would replace something Reminders is already managing.
+    @State private var pendingOverride: Override?
+
+    /// Changing a notification or a repeat rule is the one place this app writes over
+    /// something the user set up in Reminders, so it asks first — and only when something
+    /// is actually being replaced, never when adding to a task that had none.
+    enum Override: Identifiable {
+        case alarm(Date?)
+        case recurrence(SimpleRecurrence?)
+        var id: String {
+            switch self {
+            case .alarm: "alarm"; case .recurrence: "recurrence"
+            }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,11 +63,9 @@ struct TaskDetailView: View {
                     separator
                     dateRows
                     separator
+                    alertAndRepeat
+                    separator
                     menus
-                    if task.hasAlarms || task.isRecurring {
-                        separator
-                        fromReminders
-                    }
                 }
                 .padding(.vertical, 4)
             }
@@ -59,6 +77,62 @@ struct TaskDetailView: View {
         .frame(maxHeight: 580)
         .background(Palette.window)
         .onAppear(perform: load)
+        .confirmationDialog(
+            "Override Reminders?",
+            isPresented: Binding(
+                get: { pendingOverride != nil },
+                set: { if !$0 { revertPending() } }
+            ),
+            presenting: pendingOverride
+        ) { override in
+            Button("Change it") { apply(override) }
+            Button("Cancel", role: .cancel) { revertPending() }
+        } message: { override in
+            switch override {
+            case .alarm:
+                Text("This reminder's notification was set in Reminders. Changing it here replaces it, and the old alert won't fire.")
+            case .recurrence:
+                Text("This reminder's repeat rule was set in Reminders. Changing it here replaces it.")
+            }
+        }
+    }
+
+    /// Applies immediately when nothing is being replaced; asks first when something is.
+    private func request(_ override: Override, replacing existing: Bool) {
+        if existing {
+            pendingOverride = override
+        } else {
+            apply(override)
+        }
+    }
+
+    private func requestRepeat() {
+        let rule = repeats
+            ? SimpleRecurrence(frequency: frequency, interval: interval)
+            : nil
+        request(.recurrence(rule), replacing: task.isRecurring)
+    }
+
+    private func apply(_ override: Override) {
+        pendingOverride = nil
+        Task {
+            switch override {
+            case let .alarm(date): await env.store.setAlarm(task, at: date)
+            case let .recurrence(rule): await env.store.setRecurrence(task, rule)
+            }
+        }
+    }
+
+    /// Puts the toggles back where the reminder actually is, so a cancelled dialog does
+    /// not leave the UI claiming a change that never happened.
+    private func revertPending() {
+        pendingOverride = nil
+        hasAlarm = task.hasAlarms
+        repeats = task.isRecurring
+        if let shape = task.recurrence?.simple {
+            frequency = shape.frequency
+            interval = shape.interval
+        }
     }
 
     // MARK: - Sections
@@ -181,6 +255,77 @@ struct TaskDetailView: View {
         }
     }
 
+    /// Reminders' own "Remind me" and "Repeat" rows.
+    private var alertAndRepeat: some View {
+        VStack(spacing: 0) {
+            let lockedAlarm = task.alarms.first { !$0.isEditableHere }
+            let lockedRepeat = task.recurrence.map { !$0.isEditableHere } ?? false
+
+            if let lockedAlarm {
+                // A geofence cannot be rebuilt here, so it is shown rather than offered up
+                // to an editor that would replace it with something lesser.
+                lockedRow("Notification", detail: lockedAlarm.label)
+            } else {
+                row("Notification") {
+                    HStack(spacing: 6) {
+                        if hasAlarm {
+                            DatePicker("", selection: $alarmDate)
+                                .labelsHidden()
+                                .datePickerStyle(.compact)
+                                .onChange(of: alarmDate) { _, new in
+                                    request(.alarm(new), replacing: task.hasAlarms)
+                                }
+                        }
+                        Toggle("", isOn: $hasAlarm)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .onChange(of: hasAlarm) { _, on in
+                                request(.alarm(on ? alarmDate : nil), replacing: task.hasAlarms)
+                            }
+                    }
+                }
+            }
+
+            if lockedRepeat, let shape = task.recurrence {
+                lockedRow("Repeat", detail: shape.label)
+            } else if !hasDue {
+                // A repeat is anchored to the deadline; EventKit drops a rule written
+                // without one. Reminders hides the control in the same situation.
+                row("Repeat") {
+                    Text("Needs a deadline")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Palette.textTertiary)
+                }
+            } else {
+                row("Repeat") {
+                    HStack(spacing: 6) {
+                        if repeats {
+                            Picker("", selection: $frequency) {
+                                ForEach(RecurrenceFrequency.allCases, id: \.self) {
+                                    Text($0.label).tag($0)
+                                }
+                            }
+                            .labelsHidden()
+                            .fixedSize()
+                            .onChange(of: frequency) { _, _ in requestRepeat() }
+
+                            Stepper("\(interval)", value: $interval, in: 1...30)
+                                .font(.system(size: 11.5))
+                                .fixedSize()
+                                .onChange(of: interval) { _, _ in requestRepeat() }
+                        }
+                        Toggle("", isOn: $repeats)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .onChange(of: repeats) { _, _ in requestRepeat() }
+                    }
+                }
+            }
+        }
+    }
+
     private var menus: some View {
         VStack(spacing: 0) {
             row("Priority") {
@@ -284,6 +429,29 @@ struct TaskDetailView: View {
         Divider().overlay(Palette.separator).padding(.vertical, 2)
     }
 
+    /// A row this app deliberately will not edit, with the reason attached.
+    private func lockedRow(_ label: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text(label).font(.system(size: 12.5)).foregroundStyle(Palette.textPrimary)
+                Spacer(minLength: 8)
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(1)
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Palette.textTertiary)
+            }
+            Text("More detailed than this app can edit — change it in Reminders.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(Palette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 5)
+    }
+
     private func fact(_ symbol: String, _ text: String) -> some View {
         HStack(spacing: 7) {
             Image(systemName: symbol).font(.system(size: 10))
@@ -308,6 +476,14 @@ struct TaskDetailView: View {
         dueTime = task.dueDate
             ?? Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date())
             ?? Date()
+
+        hasAlarm = task.hasAlarms
+        if case let .absolute(date)? = task.alarms.first { alarmDate = date }
+        repeats = task.isRecurring
+        if let shape = task.recurrence?.simple {
+            frequency = shape.frequency
+            interval = shape.interval
+        }
     }
 
     private func applyDueTime(_ date: Date) {

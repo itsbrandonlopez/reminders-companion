@@ -111,6 +111,83 @@ enum WidgetDiagnostic {
         log.append("  time cleared: timed=\(p.dueIsTimed) day=\(p.dueDay?.description ?? "nil")  \(clearedOK ? "✓" : "✗")")
 
         await env.store.delete(p)
+        log.append("")
+        log.append(await alarmAndRepeatChecks(env: env))
+        return log.joined(separator: "\n")
+    }
+
+    /// The two fields the app deliberately avoided writing until now. Each is checked for
+    /// round-tripping *and* for the guard that stops it clobbering something richer.
+    private static func alarmAndRepeatChecks(env: MobileEnvironment) async -> String {
+        var log = ["── Alarm & repeat diagnostic ──"]
+        guard let list = env.store.lists.first(where: { $0.title == ReminderStore.sampleListName })
+                ?? env.store.lists.first(where: \.isEditable) else { return "  ✗ no editable list" }
+
+        let title = "Alarm probe \(UUID().uuidString.prefix(6))"
+        await env.store.create(title: title, in: list.id, on: .today())
+        await env.store.refresh()
+        guard var p = env.store.tasks.first(where: { $0.title == title }) else {
+            return "  ✗ could not create the probe"
+        }
+        func reload() { p = env.store.tasks.first { $0.id == p.id } ?? p }
+
+        // Alarm round trip.
+        let fire = Calendar.current.date(byAdding: .day, value: 2, to: Date())!
+        await env.store.setAlarm(p, at: fire); reload()
+        let gotAlarm = p.alarms.count == 1 && p.hasAlarms
+        log.append("  alarm set: \(p.alarms.first?.label ?? "none")  \(gotAlarm ? "✓" : "✗")")
+
+        await env.store.setAlarm(p, at: nil); reload()
+        log.append("  alarm cleared: \(p.alarms.isEmpty && !p.hasAlarms ? "✓" : "✗")")
+
+        // Repeat round trip. A repeat rule is anchored to the *due* date — the earlier
+        // recurrence diagnostic that worked set one first — so this checks both states.
+        await env.store.setRecurrence(p, SimpleRecurrence(frequency: .weekly, interval: 2)); reload()
+        log.append("  repeat with no deadline: \(p.recurrence == nil ? "correctly refused/dropped" : "accepted")")
+
+        await env.store.setDueDay(p, to: Day.today().adding(days: 1)); reload()
+        await env.store.setRecurrence(p, SimpleRecurrence(frequency: .weekly, interval: 2)); reload()
+        let r = p.recurrence
+        let repeatOK = r?.frequency == .weekly && r?.interval == 2 && r?.isEditableHere == true
+        log.append("  repeat set: \(r?.label ?? "none")  \(repeatOK ? "✓" : "✗")")
+
+        // Editing other fields must not disturb the repeat rule.
+        await env.store.setPriority(p, .high); reload()
+        log.append("  repeat survives an unrelated edit: \(p.recurrence?.interval == 2 ? "✓" : "✗")")
+
+        await env.store.setRecurrence(p, nil); reload()
+        log.append("  repeat cleared: \(p.recurrence == nil && !p.isRecurring ? "✓" : "✗")")
+
+        // The guard: a rule richer than this app can express must be refused, not
+        // silently flattened. Written with EventKit directly, since the app cannot build one.
+        let direct = EKEventStore()
+        var guardResult = "could not construct a positional rule"
+        if (try? await direct.requestFullAccessToReminders()) == true,
+           let live = direct.calendarItems(withExternalIdentifier: p.id)
+               .compactMap({ $0 as? EKReminder }).first {
+            let everySecondTuesday = EKRecurrenceRule(
+                recurrenceWith: .monthly,
+                interval: 1,
+                daysOfTheWeek: [EKRecurrenceDayOfWeek(.tuesday, weekNumber: 2)],
+                daysOfTheMonth: nil, monthsOfTheYear: nil, weeksOfTheYear: nil,
+                daysOfTheYear: nil, setPositions: nil, end: nil
+            )
+            live.addRecurrenceRule(everySecondTuesday)
+            try? direct.save(live, commit: true)
+            await env.store.refresh(); reload()
+
+            let detected = p.recurrence?.isEditableHere == false
+            let refused = await env.store.setRecurrence(
+                p, SimpleRecurrence(frequency: .daily)
+            ) == false
+            reload()
+            let intact = p.recurrence?.hasPositionalSpecifiers == true
+            guardResult = "detected=\(detected) refused=\(refused) ruleIntact=\(intact)  " +
+                (detected && refused && intact ? "✓ not clobbered" : "✗ GUARD FAILED")
+        }
+        log.append("  'every 2nd Tuesday': \(guardResult)")
+
+        await env.store.delete(p)
         return log.joined(separator: "\n")
     }
 
