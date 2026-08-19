@@ -1,3 +1,6 @@
+// Demo seeding creates and deletes real reminders, so it is unavailable on watchOS where
+// EventKit is read-only. Nothing on a watch face would offer to seed data anyway.
+#if !os(watchOS)
 import EventKit
 import Foundation
 
@@ -138,3 +141,4 @@ extension ReminderStore {
         await refresh()
     }
 }
+#endif

@@ -92,12 +92,14 @@ public final class ReminderStore {
         #if canImport(AppKit)
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders")!
         NSWorkspace.shared.open(url)
-        #elseif canImport(UIKit)
+        #elseif os(iOS)
         // iOS has no per-service deep link; this opens the app's own settings page.
         if let url = URL(string: UIApplication.openSettingsURLString) {
             UIApplication.shared.open(url)
         }
         #endif
+        // watchOS deliberately has no branch: there is no way to open a Settings pane from
+        // a watch app, so permission has to be granted on the paired iPhone.
     }
 
     // MARK: - Change observation
@@ -201,6 +203,9 @@ public final class ReminderStore {
     /// extension is a separate, short-lived process with its own store, not a shared
     /// instance of the app's `ReminderStore`. Kept as one static function so the app and
     /// the widget can never drift onto two different completion code paths.
+    /// Unavailable on watchOS, where `save` is prohibited — this is the function the
+    /// *iPhone* calls on the Watch's behalf when a completion arrives over WatchConnectivity.
+    #if !os(watchOS)
     @discardableResult
     public nonisolated static func completeReminder(externalID: String, in store: EKEventStore) throws -> Bool {
         guard let reminder = store.calendarItems(withExternalIdentifier: externalID)
@@ -209,6 +214,7 @@ public final class ReminderStore {
         try store.save(reminder, commit: true)
         return true
     }
+    #endif
 
     /// The pure `EKReminder` → `TaskItem` mapping, with no sidecar involved.
     ///
@@ -254,7 +260,17 @@ public final class ReminderStore {
         )
     }
 
+#if !os(watchOS)
     // MARK: - Writing
+    //
+    // watchOS EventKit is read-only: `save`, `remove` and `commit` are all
+    // `__WATCHOS_PROHIBITED`, so this entire surface is unavailable there. The Watch app
+    // reads through `WidgetDataProvider` and proxies completions to the iPhone over
+    // WatchConnectivity, which performs the write with `completeReminder` below.
+    //
+    // Guarded as one block deliberately. Sprinkling `#if` around individual `store.save`
+    // calls would leave the surrounding functions compiling on watchOS while silently
+    // doing nothing — a far worse failure than not existing at all.
 
     /// Adds a start date when iOS would otherwise refuse to save a due date.
     ///
@@ -569,6 +585,8 @@ public final class ReminderStore {
             lastError = "Could not save “\(task.title)”: \(error.localizedDescription)"
         }
     }
+
+#endif
 
     // MARK: - Ordering (sidecar only, never round-trips to Reminders)
 
