@@ -1,4 +1,6 @@
+import EventKit
 import RemindersCore
+import RemindersShared
 import SwiftUI
 import WidgetKit
 
@@ -34,6 +36,7 @@ struct RootView: View {
         .task {
             if env.store.access == .granted { await env.store.refresh() }
             env.loadOverlayIfAuthorized()
+            startWatchBridge()
 
 #if DEBUG
             await DebugHooks.runIfRequested(env: env)
@@ -58,6 +61,29 @@ struct RootView: View {
         .onOpenURL { url in
             env.handleDeepLink(url)
         }
+    }
+}
+
+extension RootView {
+    /// Listens for completions sent from the paired Watch, which cannot write to
+    /// EventKit itself.
+    ///
+    /// Runs `ReminderStore.completeReminder` — the same static function the widget's
+    /// `CompleteTaskIntent` calls — so the Watch, the widget and the app all complete a
+    /// task through one code path rather than three that can drift.
+    func startWatchBridge() {
+        WatchBridge.shared.onCompleteRequest = { taskID in
+            Task { @MainActor in
+                let store = EKEventStore()
+                _ = try? ReminderStore.completeReminder(externalID: taskID, in: store)
+                // The queued path can deliver while the app is backgrounded, so refresh
+                // rather than assuming anyone is looking at a live view.
+                await env.store.refresh()
+                WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.today)
+                WidgetCenter.shared.reloadTimelines(ofKind: WidgetKind.nextUp)
+            }
+        }
+        WatchBridge.shared.activate()
     }
 }
 

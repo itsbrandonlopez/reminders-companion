@@ -37,7 +37,12 @@ targets:
     dependencies:
       - package: RemindersCore
         product: RemindersCore
+      # The iPhone side of the Watch bridge: it performs the writes the Watch cannot.
+      - package: RemindersCore
+        product: RemindersShared
       - target: RemindersCompanionWidgets
+        embed: true
+      - target: RemindersCompanionWatch
         embed: true
     info:
       path: Sources/RemindersCompanionMobile/Info.plist
@@ -121,4 +126,74 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
         TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: NO
+
+  RemindersCompanionWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: Sources/RemindersCompanionWatch
+    dependencies:
+      - package: RemindersCore
+        product: RemindersCore
+      - package: RemindersCore
+        product: RemindersShared
+      - target: RemindersCompanionWatchWidgets
+        embed: true
+    info:
+      path: Sources/RemindersCompanionWatch/Info.plist
+      properties:
+        CFBundleDisplayName: Companion
+        # Required for a modern (single-target) watchOS app; without it the install is
+        # rejected outright with "missing either the WKWatchKitApp or WKApplication key".
+        WKApplication: true
+        # Ties the watch app to its iPhone counterpart so they install as one product.
+        WKCompanionAppBundleIdentifier: com.brandonlopez.RemindersCompanionMobile
+        WKRunsIndependentlyOfCompanionApp: false
+        NSRemindersFullAccessUsageDescription: >-
+          Reminders Companion shows what's due today on your wrist. Your tasks stay in
+          Reminders and your existing notifications are never changed.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.brandonlopez.RemindersCompanionMobile.watchkitapp
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_STRICT_CONCURRENCY: complete
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+        TARGETED_DEVICE_FAMILY: "4"
+        SKIP_INSTALL: NO
+
+  RemindersCompanionWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: Sources/RemindersCompanionWatchWidgets
+    dependencies:
+      - package: RemindersCore
+        product: RemindersCore
+    info:
+      path: Sources/RemindersCompanionWatchWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Companion
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        NSRemindersFullAccessUsageDescription: >-
+          Reminders Companion shows what's due today on your watch face. Your tasks stay in
+          Reminders and your existing notifications are never changed.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.brandonlopez.RemindersCompanionMobile.watchkitapp.widgets
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_STRICT_CONCURRENCY: complete
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+        TARGETED_DEVICE_FAMILY: "4"
         SKIP_INSTALL: NO

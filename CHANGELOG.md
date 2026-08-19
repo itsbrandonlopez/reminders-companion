@@ -4,6 +4,44 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Apple Watch
+
+### Added
+
+- **Watch app and complications.** A Today list on the wrist, plus watch-face
+  complications in circular, rectangular, inline and corner families.
+- **`WatchBridge`** (new `RemindersShared` target, iOS + watchOS only) carrying completions
+  from the Watch to the iPhone over WatchConnectivity. `sendMessage` when the phone is
+  reachable, falling back to `transferUserInfo`, which queues and is delivered guaranteed —
+  so completing a task on a run with the phone left at home still lands on reconnect.
+- The phone-side receiver runs `ReminderStore.completeReminder`, the same static function
+  the widget's intent uses, so the Watch, the widget and the app share one completion path
+  rather than three that drift.
+- `OptimisticCompletions` in `RemindersCore` hides a tapped row immediately and reconciles
+  when the write comes back through sync — including releasing a task that gets
+  un-completed elsewhere, which would otherwise stay invisible on the Watch forever.
+
+### Changed
+
+- **`RemindersCore` now compiles for watchOS.** watchOS EventKit is read-only —
+  `saveReminder`, `removeReminder`, `saveCalendar`, `removeCalendar` and `commit` are all
+  `__WATCHOS_PROHIBITED` — so the write surface is guarded as one block between the Writing
+  and Ordering MARKs. Guarding individual `store.save` calls instead would leave the
+  enclosing functions compiling on watchOS while silently doing nothing, which is worse
+  than not existing.
+- `SampleData` and `RecurrenceDiagnostic` are excluded on watchOS for the same reason.
+
+### Notes
+
+- **The Watch app cannot be verified with real data.** A watchOS simulator has its own
+  empty Reminders database, and because watchOS cannot write, nothing can seed it — so it
+  correctly shows "All clear" and always will. The app renders, the empty and unauthorised
+  states work, and the reading path is `WidgetDataProvider`, already verified extensively
+  against live EventKit on iOS. The genuinely watch-specific logic was moved into
+  `OptimisticCompletions` precisely so it could be unit-tested instead.
+- Building a watch scheme with `-sdk watchsimulator` forces that SDK onto every target in
+  the scheme, including the iOS widget extension. Use `-destination` alone.
+
 ## [Unreleased] — Audit fixes
 
 A full review of the ~7,200 lines added since 1.0.0 turned up eight issues, all fixed.

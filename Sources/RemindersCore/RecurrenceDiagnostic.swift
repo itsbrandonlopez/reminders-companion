@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG && !os(watchOS)
 import EventKit
 import Foundation
 
