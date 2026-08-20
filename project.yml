@@ -16,6 +16,13 @@
 #   xcodegen generate
 #
 # Simulator builds need no team and work with this unset.
+#
+# Syncing the sidecar through iCloud needs the same account, plus a CloudKit container
+# named `iCloud.com.brandonlopez.RemindersCompanion` created in the portal. Once both
+# exist, switch the entitlements on too — until then the phone reads a local sidecar and
+# the app says so:
+#
+#   export MOBILE_ENTITLEMENTS=signing/RemindersCompanionMobile.entitlements
 name: RemindersCompanionMobile
 
 options:
@@ -77,7 +84,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.brandonlopez.RemindersCompanionMobile
-        MARKETING_VERSION: "1.3.0"
+        MARKETING_VERSION: "1.4.0"
         # App Store Connect requires each upload to carry a higher build number than the
         # last, within a given marketing version. Bump with ./bump-build.sh before
         # archiving, not by hand.
@@ -89,6 +96,12 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+        # Left empty until there is a team to authorise it. iCloud is a capability the
+        # portal has to grant, and switching it on without one fails the build outright —
+        # including simulator builds, which otherwise need no signing at all. Set it
+        # alongside DEVELOPMENT_TEAM and the phone joins the sync:
+        #   export MOBILE_ENTITLEMENTS=signing/RemindersCompanionMobile.entitlements
+        CODE_SIGN_ENTITLEMENTS: ${MOBILE_ENTITLEMENTS}
 
   RemindersCompanionWidgets:
     type: app-extension
@@ -121,7 +134,7 @@ targets:
         # Apple requires an extension's marketing version to match its containing app's.
         # bump-build.sh's build-number substitution matches this line too, since it
         # patches every CURRENT_PROJECT_VERSION occurrence in the file.
-        MARKETING_VERSION: "1.3.0"
+        MARKETING_VERSION: "1.4.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: NO
@@ -161,7 +174,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.brandonlopez.RemindersCompanionMobile.watchkitapp
-        MARKETING_VERSION: "1.3.0"
+        MARKETING_VERSION: "1.4.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: NO
@@ -192,7 +205,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.brandonlopez.RemindersCompanionMobile.watchkitapp.widgets
-        MARKETING_VERSION: "1.3.0"
+        MARKETING_VERSION: "1.4.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: NO

@@ -4,6 +4,105 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-08-19
+
+Mac app navigation reshaped around what each view is actually for — and the sidecar,
+which had quietly become the place your arrangement lives, learned to sync.
+
+### Changed
+
+- **A list in the sidebar now opens that list.** Every task in it, dated or not, in manual
+  order, as a flat Reminders-style view with inline reordering and the same detail popover
+  and right-click menu the board cards have. Clicking a list used to open the *week board*
+  narrowed to it — a smaller question than the one a list row asks, and one that hid every
+  undated task in the list, which for most lists is most of them.
+- **Week and Today are views in their own right**, selected from the sidebar rather than
+  derived from whichever tile was last clicked.
+- **Two smart tiles instead of four.** Scheduled, All and Backlog all opened the same week
+  board with a flag flipped, so they were three names for one view. Backlog was already a
+  column on that board; its count survives as a badge on the Week tile, which was the part
+  worth glancing at.
+- **The toolbar's Week/Today picker is gone.** The sidebar is the only view selector now,
+  as it is in Reminders — two controls over one piece of state is one too many.
+- **The per-column add fields are replaced by one floating + button**, bottom-right, over
+  every view. Clicking it opens a compose field in the column the view implies; **dragging
+  it onto a column opens the field there** — a day on the Week board, a client column on
+  Today, the list you are in. That is how "new task, on Thursday, for this client" gets
+  said without typing a date or a `#list` token. ⌘N opens the same field.
+- The compose field stays open after each submit, as Reminders' own new row does, and
+  closes on Escape or on losing focus while empty.
+- **The Today board's calendar events are a vertical timeline down the side** instead of a
+  horizontal row of chips across the top. The row gave a ten-minute call and a six-hour gig
+  the same size and pushed the actual work down the screen; a timeline draws them to scale,
+  with hour gridlines, a now-line, side-by-side lanes for overlapping events, and an
+  opening scroll position an hour before now. All-day events become one-line mentions above
+  the grid. The rail is pinned outside the horizontal scroll view, so scrolling to the
+  fifth client column never scrolls the day's shape away, and it folds to a strip
+  (persisted). It appears only once calendars have actually been picked.
+
+### Added
+
+- **List sections, as Kanban columns.** A list with sections renders as a board of columns
+  — the same shape Reminders gives a sectioned list — with drag between columns, drag to
+  reorder within one, an "Add Section" ghost column at the end, and rename/reorder/delete
+  per column. A list with no sections stays flat, so the presence of sections *is* the
+  toggle and there is no second control to disagree with the content.
+- Sections cannot be read from Reminders by anyone, and this was verified rather than
+  assumed: no "section" anywhere in the macOS 26.5 EventKit headers, three classes in
+  Reminders' AppleScript dictionary with no section among them, and a TCC-protected private
+  store whose schema is Apple's to change. So they are typed once here and matched by name,
+  exactly the bargain `ListFolder` already makes. New `ListSection` model, `TaskMeta`
+  gains `sectionID`, five new sidecar tests.
+- Deleting a section re-files its tasks as unsectioned and closes the gap in the sort
+  order; it never touches a task.
+- "Move to Section" in the task right-click menu, shown only for a list that has sections.
+
+- **The sidecar syncs through iCloud**, so manual order, estimates, folders and sections
+  reach every device instead of living on one Mac. `MetaStore` is now a CloudKit-backed
+  SwiftData store, gated: it checks iCloud availability, attempts the CloudKit
+  configuration, and falls back to a local store on any failure, reporting which through
+  `MetaStore.Storage`. The sidebar says which one is in force, because an app that quietly
+  is not syncing is worse than one that admits it.
+- **The iPhone opens the same sidecar** and gained a fourth tab, **Lists** — your lists,
+  and inside them the sections arranged on the Mac, rendered as headers rather than
+  columns. The phone also honours the manual order you dragged out on the Mac; without a
+  sidecar it still falls back to priority-then-day, exactly as before.
+- Signing is what decides whether any of it syncs. iCloud entitlements are only honoured
+  under a real identity, so `make.sh` passes them only when `CODESIGN_IDENTITY` is set and
+  ad-hoc signs otherwise, and `project.yml` leaves the iOS entitlements empty until
+  `MOBILE_ENTITLEMENTS` is exported — otherwise switching iCloud on breaks simulator
+  builds, which need no signing at all today. Both are documented in the README.
+
+### Fixed
+
+- **Sidebar rows could only be clicked on their text.** A row's background is a shape
+  filled with `.clear` when it is neither selected nor hovered, and SwiftUI does not
+  hit-test a clear fill — so the row looked like a target the whole way across but only
+  responded on the icon and the name. Affected list rows, folder headers and the calendar
+  toggles; all three now set an explicit `contentShape`.
+
+### Internal
+
+- `SidebarFocus` narrowed from five cases to three, one per kind of view.
+- `ComposeTarget` makes "where a new task lands" a value rather than a property of whatever
+  text field happened to hold focus — which is what lets the + be dragged.
+- `DragPayload.decode` became `DragPayload.kind`, returning a three-case enum: a card body,
+  a span handle, or the + button.
+- The task right-click menu is extracted as `TaskMenu`, shared by board cards and list rows.
+- **CloudKit reshaped the sidecar schema.** It supports no unique constraints, so
+  `TaskMeta.externalID` lost `@Attribute(.unique)` — the thing that made a second row for
+  one task impossible. `MetaStore.deduplicate()` replaces it, merging rival rows field by
+  field so a value one device holds is never dropped because the other saw the task more
+  recently; it runs from `indexedByExternalID()`, which every refresh already calls. Every
+  stored property gained a default, as CloudKit also requires. Five new tests cover it.
+- The store is copied to `default.store.pre-cloudkit-backup` once before the first open
+  under the new schema, since that open drops a constraint and the file now holds
+  hand-typed sections that exist nowhere else.
+- `ReminderStore.create` returns the new reminder's external identifier, so a caller can
+  attach sidecar state to it instead of guessing which refreshed task is the new one by
+  title. `TaskCardView` gains `showsList`, off inside a single list where every card would
+  otherwise repeat the same name and colour.
+
 ## [1.3.0] — 2026-08-19
 
 Since 1.2.1 this has grown from a single Mac app into four surfaces sharing one core: the
@@ -423,6 +522,7 @@ source of truth.
 - macOS only. The domain logic is UI-free and platform-agnostic, so an iPhone app and
   widget can be added without rework.
 
+[1.4.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.4.0
 [1.3.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.3.0
 [1.2.1]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.2.1
 [1.2.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.2.0

@@ -1,8 +1,9 @@
 import RemindersCore
 import SwiftUI
 
-/// Three tabs. Today and Week carry only dated work; the two piles that would clog them
-/// live in Triage, one tap away and badged when the backlog is not empty.
+/// Four tabs. Today and Week carry only dated work; the two piles that would clog them
+/// live in Triage, one tap away and badged when the backlog is not empty; Lists is where
+/// the sections and manual order arranged on the Mac show up, now that the sidecar syncs.
 struct RootTabView: View {
     @Environment(MobileEnvironment.self) private var env
     @State private var selection = {
@@ -23,8 +24,9 @@ struct RootTabView: View {
             // Adding from a past or future week defaults to that week's first day rather
             // than today, so the task lands where you were looking.
             return env.week.contains(.today()) ? .today() : env.week.first
-        case 2:
-            // Triage is the pile for things without a day yet.
+        case 2, 3:
+            // Triage is the pile for things without a day yet, and a list is a place
+            // rather than a date.
             return nil
         default:
             return .today()
@@ -45,6 +47,10 @@ struct RootTabView: View {
                 .tabItem { Label("Triage", systemImage: "tray.full") }
                 .badge(env.backlogCount)
                 .tag(2)
+
+            ListsView()
+                .tabItem { Label("Lists", systemImage: "list.bullet") }
+                .tag(3)
         }
         .overlay(alignment: .bottomTrailing) {
             FloatingAddButton { isAdding = true }

@@ -1,16 +1,8 @@
 import RemindersCore
 import SwiftUI
 
-enum BoardMode: String, CaseIterable, Identifiable {
-    case week = "Week"
-    case today = "Today"
-    var id: String { rawValue }
-    var symbol: String { self == .week ? "calendar" : "square.grid.3x1.below.line.grid.1x2" }
-}
-
 struct ContentView: View {
     @Environment(AppEnvironment.self) private var env
-    @State private var mode: BoardMode = .week
 
     var body: some View {
         Group {
@@ -66,6 +58,11 @@ struct ContentView: View {
         }
     }
 
+    private var isViewingList: Bool {
+        if case .list = env.focus { return true }
+        return false
+    }
+
     private var sampleTitle: String {
         env.pendingSampleAction == .remove ? "Remove the demo list?" : "Add demo tasks?"
     }
@@ -73,20 +70,11 @@ struct ContentView: View {
     private var board: some View {
         @Bindable var env = env
         return NavigationSplitView {
-            SidebarView { focus in
-                env.focus = focus
-                // Only Today has a board of its own; every other tile lands on the week,
-                // where the backlog already has a column. The tiles differ in what they
-                // give room to: Backlog and Scheduled fold the unscheduled pool away,
-                // All opens it back up.
-                mode = (focus == .today) ? .today : .week
-                switch focus {
-                case .backlog, .scheduled: env.isUnscheduledCollapsed = true
-                case .all: env.isUnscheduledCollapsed = false
-                case .today, .list: break
-                }
-            }
-            .navigationSplitViewColumnWidth(min: 208, ideal: 232, max: 300)
+            // The sidebar is now the only view selector, as it is in Reminders. The
+            // toolbar's Week/Today picker used to be a second one, which meant two
+            // controls to keep agreeing with each other about the same state.
+            SidebarView { focus in env.focus = focus }
+                .navigationSplitViewColumnWidth(min: 208, ideal: 232, max: 300)
         } detail: {
             VStack(spacing: 0) {
                 if let warning = env.sidecarWarning { banner(warning, color: Palette.flag) }
@@ -96,29 +84,25 @@ struct ContentView: View {
                 if let action = env.store.undoable {
                     undoBanner(for: action)
                 }
-                switch mode {
+                switch env.focus {
                 case .week: WeekBoardView()
                 case .today: TodayBoardView()
+                case let .list(id): ListDetailView(listID: id)
                 }
             }
+            // Mounted here rather than inside each view: one button, one position, and it
+            // survives switching between them.
+            .overlay(alignment: .bottomTrailing) {
+                FloatingAddButton()
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 20)
+            }
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Picker("View", selection: $mode) {
-                        ForEach(BoardMode.allCases) { m in
-                            Label(m.rawValue, systemImage: m.symbol).tag(m)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelStyle(.titleOnly)
-                    .frame(width: 160)
-                    .onChange(of: mode) { _, newValue in
-                        // Keep the sidebar honest when the view is switched from the
-                        // toolbar rather than from a tile.
-                        if newValue == .today, env.focus != .today { env.focus = .today }
-                        if newValue == .week, env.focus == .today { env.focus = .scheduled }
-                    }
+                // The filter decides which lists the two boards aggregate. Inside a single
+                // list it would be a control with nothing to act on.
+                if !isViewingList {
+                    ToolbarItem(placement: .automatic) { ListFilterMenu() }
                 }
-                ToolbarItem(placement: .automatic) { ListFilterMenu() }
             }
             .searchable(text: $env.searchText, placement: .toolbar, prompt: "Search tasks")
         }

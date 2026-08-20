@@ -86,6 +86,9 @@ public struct TaskItem: Identifiable, Hashable, Sendable {
     // Sidecar-only fields.
     public var rank: Double
     public var estimateMinutes: Int?
+    /// Which `ListSection` of its list this sits in, or nil for the unsectioned column.
+    /// Sidecar-only and Mac-only: Reminders exposes no section of any kind.
+    public var sectionID: String?
 
     public init(
         id: String, title: String, notes: String? = nil, url: URL? = nil,
@@ -94,7 +97,8 @@ public struct TaskItem: Identifiable, Hashable, Sendable {
         hasAlarms: Bool = false, isRecurring: Bool = false,
         alarms: [AlarmShape] = [], recurrence: RecurrenceShape? = nil,
         plannedDay: Day? = nil, dueDay: Day? = nil, dueIsTimed: Bool = false,
-        dueDate: Date? = nil, rank: Double = 0, estimateMinutes: Int? = nil
+        dueDate: Date? = nil, rank: Double = 0, estimateMinutes: Int? = nil,
+        sectionID: String? = nil
     ) {
         self.id = id; self.title = title; self.notes = notes; self.url = url
         self.listID = listID; self.listName = listName; self.listColor = listColor
@@ -103,6 +107,7 @@ public struct TaskItem: Identifiable, Hashable, Sendable {
         self.alarms = alarms; self.recurrence = recurrence
         self.plannedDay = plannedDay; self.dueDay = dueDay; self.dueIsTimed = dueIsTimed
         self.dueDate = dueDate; self.rank = rank; self.estimateMinutes = estimateMinutes
+        self.sectionID = sectionID
     }
 
     public var hasNotes: Bool { !(notes ?? "").trimmingCharacters(in: .whitespaces).isEmpty }

@@ -2,6 +2,25 @@ import Observation
 import RemindersCore
 import SwiftUI
 
+/// Which column a new task is being typed into.
+///
+/// The + button is one button for every view, so where a task lands has to be a value
+/// rather than a property of whichever field happened to have focus. Dropping the button
+/// on a column sets this; the field appears wherever it points.
+enum ComposeTarget: Hashable {
+    /// A day column on the Week board — the task is planned for that day.
+    case day(Day)
+    /// The Week board's pool. Creates a task with no date at all.
+    case unscheduled
+    /// A list column on the Today board: that list, planned for today.
+    case todayList(String)
+    /// A list on its own. That list, no date — the same thing Reminders' new row does.
+    case list(String)
+    /// One column of a sectioned list. The task is filed into that section on creation;
+    /// a nil section is the list's unsectioned column.
+    case listSection(list: String, section: String?)
+}
+
 /// Owns the object graph for the window. Kept separate from `ReminderStore` so the
 /// store stays focused on EventKit and testable without any UI around it.
 @MainActor
@@ -13,6 +32,11 @@ final class AppEnvironment {
     /// refusing to launch.
     private(set) var sidecarWarning: String?
 
+    /// Where the sidecar lives — synced, or on this Mac alone. Surfaced in the sidebar,
+    /// because "my sections haven't appeared on my phone" has two very different causes
+    /// and only one of them is a bug.
+    private(set) var sidecarStorage: MetaStore.Storage = .local
+
     /// Convenience for setup: selects every list, i.e. clears the filter.
     func includeAllLists() { selectedListIDs.removeAll() }
 
@@ -20,10 +44,94 @@ final class AppEnvironment {
     /// Driven by the checkmark menu, kept separate from `focus` so drilling into one
     /// list does not disturb the set you normally work with.
     var selectedListIDs: Set<String> = []
-    var focus: SidebarFocus = .scheduled
+    var focus: SidebarFocus = .week {
+        didSet {
+            // A compose field belongs to the column it was opened in. Switching views
+            // leaves it nowhere to live, so it closes rather than reappearing later in
+            // a column the user has since navigated away from.
+            if focus != oldValue { composeTarget = nil }
+        }
+    }
     var weekAnchor: Day = .today()
     var searchText: String = ""
     var isUnscheduledCollapsed = false
+
+    /// The one column currently offering a field to type a new task into, if any.
+    ///
+    /// Single-valued on purpose: there is one + button, so there is one field. Before
+    /// this, every column carried its own permanently visible add field, which put nine
+    /// text fields on the week board competing for a click.
+    private(set) var composeTarget: ComposeTarget?
+
+    func beginCompose(_ target: ComposeTarget) {
+        // A field inside a folded-away column would be typing into nothing.
+        if target == .unscheduled { isUnscheduledCollapsed = false }
+        composeTarget = target
+    }
+
+    /// Closes the field — but only if it is still the one asking. A drop that opens a
+    /// second column while the first is losing focus must not have the first cancel the
+    /// second on its way out.
+    func endCompose(_ target: ComposeTarget) {
+        if composeTarget == target { composeTarget = nil }
+    }
+
+    /// Where the + opens when it is clicked rather than dragged: whatever the view on
+    /// screen most obviously means by "a new task".
+    var defaultComposeTarget: ComposeTarget {
+        switch focus {
+        case let .list(id):
+            // A sectioned list draws as columns, where the flat field has nowhere to
+            // appear. The unsectioned column is where an unfiled task belongs anyway.
+            return sections(in: id).isEmpty ? .list(id) : .listSection(list: id, section: nil)
+        case .today:
+            // The list Siri writes to, so a typed task and a voice capture land together.
+            let target = visibleLists.first { $0.isDefault && $0.isEditable }
+                ?? visibleLists.first(where: \.isEditable)
+            return target.map { .todayList($0.id) } ?? .unscheduled
+        case .week:
+            // Adding while looking at another week defaults to that week's first day
+            // rather than to today, so the task lands where you were looking.
+            return .day(week.contains(.today()) ? .today() : (week.first ?? .today()))
+        }
+    }
+
+    /// Creates what a compose field just submitted, in the column it belongs to.
+    ///
+    /// When the target names a list, that list wins over any `#list` token in the text —
+    /// the column *is* the answer to which list. A day column claims no list, so the
+    /// token still decides there.
+    func commitCompose(_ input: String, in target: ComposeTarget) {
+        switch target {
+        case let .day(day): quickAdd(input, defaultDay: day)
+        case .unscheduled: quickAdd(input, defaultDay: nil)
+        case let .todayList(id): create(input, in: id, defaultDay: .today())
+        case let .list(id): create(input, in: id, defaultDay: nil)
+        case let .listSection(id, section):
+            create(input, in: id, defaultDay: nil, sectionID: section)
+        }
+    }
+
+    private func create(
+        _ input: String, in listID: String, defaultDay: Day?, sectionID: String? = nil
+    ) {
+        let parsed = QuickAddParser.parse(input)
+        let title = parsed.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        Task {
+            let created = await store.create(
+                title: title,
+                in: listID,
+                on: parsed.day ?? defaultDay,
+                priority: parsed.priority ?? .none
+            )
+            // Filed after the fact, since the section lives in the sidecar and the
+            // identifier to key it on only exists once Reminders has saved the reminder.
+            if let sectionID, let created {
+                store.setSections([created: sectionID])
+            }
+        }
+    }
 
     /// Pending demo-data action awaiting confirmation. Writing to someone's Reminders is
     /// never done off a bare menu click.
@@ -85,10 +193,18 @@ final class AppEnvironment {
         didSet { defaults.set(isCalendarsCollapsed, forKey: Self.calendarsCollapsedKey) }
     }
 
+    /// Whether the Today board's timeline rail is folded to a strip. Persisted, because
+    /// whether you want your day's shape next to your day's work is a standing preference,
+    /// not a per-session one.
+    var isTimelineCollapsed: Bool {
+        didSet { defaults.set(isTimelineCollapsed, forKey: Self.timelineCollapsedKey) }
+    }
+
     private let defaults = UserDefaults.standard
     private static let overlayKey = "overlayCalendarIDs"
     private static let autoPickedKey = "didAutoPickWorkCalendar"
     private static let calendarsCollapsedKey = "isCalendarsCollapsed"
+    private static let timelineCollapsedKey = "isTimelineCollapsed"
     private static let unscheduledKey = "unscheduledListIDs"
     private static let seededFoldersKey = "didSeedFolders"
     private static let backlogSortKey = "backlogSort"
@@ -110,8 +226,10 @@ final class AppEnvironment {
         }
         self.meta = meta
         self.store = ReminderStore(meta: meta)
+        self.sidecarStorage = meta.storage
         self.sidecarWarning = warning
         self.isCalendarsCollapsed = defaults.bool(forKey: Self.calendarsCollapsedKey)
+        self.isTimelineCollapsed = defaults.bool(forKey: Self.timelineCollapsedKey)
         self.overlayCalendarIDs = Set(defaults.stringArray(forKey: Self.overlayKey) ?? [])
         self.unscheduledListIDs = Set(defaults.stringArray(forKey: Self.unscheduledKey) ?? [])
         self.backlogSort = BacklogSort(rawValue: defaults.string(forKey: Self.backlogSortKey) ?? "")
@@ -173,7 +291,6 @@ final class AppEnvironment {
         var continuingByDay: [Day: [TaskItem]] = [:]
         var todayCount = 0
         var scheduledCount = 0
-        var allCount = 0
         var countByList: [String: Int] = [:]
     }
 
@@ -228,7 +345,6 @@ final class AppEnvironment {
         var backlog: [TaskItem] = []
         var overdue: [TaskItem] = []
         for task in out.filtered {
-            out.allCount += 1
             if !task.isBacklog { out.scheduledCount += 1 }
 
             guard !task.isCompleted else { continue }
@@ -470,12 +586,61 @@ final class AppEnvironment {
         folderRevision += 1
     }
 
+    // MARK: - Sections
+
+    /// Bumped after every section mutation, for the same reason `folderRevision` exists:
+    /// SwiftData models are not observed by this type.
+    private(set) var sectionRevision = 0
+
+    /// The sections of one list, in display order. Empty means the list has none, which is
+    /// what makes it render flat rather than as columns.
+    func sections(in listID: String) -> [ListSection] {
+        _ = sectionRevision
+        return meta.sections(in: listID)
+    }
+
+    func createSection(named name: String, in listID: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        meta.createSection(named: trimmed, in: listID)
+        sectionRevision += 1
+    }
+
+    func rename(_ section: ListSection, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        section.name = trimmed
+        meta.save()
+        sectionRevision += 1
+    }
+
+    /// Deleting a section returns its tasks to the unsectioned column. Nothing in
+    /// Reminders is touched.
+    func delete(_ section: ListSection) {
+        if composeTarget == .listSection(list: section.listID, section: section.id.uuidString) {
+            composeTarget = nil
+        }
+        meta.deleteSection(section)
+        sectionRevision += 1
+        store.reloadSidecar()
+    }
+
+    /// Shuffles a section one place left or right.
+    func move(_ section: ListSection, by offset: Int) {
+        var ordered = meta.sections(in: section.listID)
+        guard let index = ordered.firstIndex(where: { $0.id == section.id }) else { return }
+        let target = index + offset
+        guard ordered.indices.contains(target) else { return }
+        ordered.swapAt(index, target)
+        meta.reorderSections(ordered)
+        sectionRevision += 1
+    }
+
     // MARK: - Sidebar counts
 
     /// Everything owed today, matching what the Today board shows.
     var todayCount: Int { slices.todayCount }
     var scheduledCount: Int { slices.scheduledCount }
-    var allCount: Int { slices.allCount }
 
     func count(for list: TaskList) -> Int { slices.countByList[list.id] ?? 0 }
 }

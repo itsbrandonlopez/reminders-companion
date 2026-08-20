@@ -124,7 +124,6 @@ struct DayColumn: View {
     let day: Day
     @Environment(AppEnvironment.self) private var env
     @State private var isTargeted = false
-    @State private var newTitle = ""
 
     private var tasks: [TaskItem] { env.tasks(on: day) }
     private var continuing: [TaskItem] { env.continuing(on: day) }
@@ -184,36 +183,47 @@ struct DayColumn: View {
                     task: task,
                     showsSpanHandle: true,
                     onDropAbove: { droppedID in insert(droppedID, above: index) },
-                    onSpanDrop: { draggedID in extendSpan(draggedID) }
+                    onSpanDrop: { draggedID in extendSpan(draggedID) },
+                    onNewTaskDrop: { compose() }
                 )
                 .draggable(task.id)
             }
             ForEach(continuing) { task in
-                TaskCardView(task: task, isContinuation: true, showsSpanHandle: true)
+                TaskCardView(
+                    task: task, isContinuation: true, showsSpanHandle: true,
+                    onNewTaskDrop: { compose() }
+                )
             }
             if tasks.isEmpty && continuing.isEmpty && events.isEmpty {
                 EmptyHint(text: "Nothing planned")
             }
         } footer: {
-            QuickAddField(placeholder: "Add task  ·  !! #list tomorrow", text: $newTitle) { text in
-                env.quickAdd(text, defaultDay: day)
-            }
+            if env.composeTarget == .day(day) { ComposeField(target: .day(day)) }
         }
         .dropDestination(for: String.self) { ids, _ in
             guard let raw = ids.first else { return false }
-            let (id, isSpan) = DragPayload.decode(raw)
-            guard let task = env.store.tasks.first(where: { $0.id == id }) else { return false }
-            Task {
-                // The grab handle stretches the task's far end to this day; the card
-                // body moves the whole task here.
-                if isSpan {
-                    await env.store.setSpanEnd(task, to: day)
-                } else {
-                    await env.store.schedule(task, to: day)
-                }
+            switch DragPayload.kind(raw) {
+            case .newTask:
+                return compose()
+            case let .span(id):
+                // The grab handle stretches the task's far end to this day.
+                guard let task = env.store.tasks.first(where: { $0.id == id }) else { return false }
+                Task { await env.store.setSpanEnd(task, to: day) }
+                return true
+            case let .task(id):
+                // The card body moves the whole task here.
+                guard let task = env.store.tasks.first(where: { $0.id == id }) else { return false }
+                Task { await env.store.schedule(task, to: day) }
+                return true
             }
-            return true
         } isTargeted: { isTargeted = $0 }
+    }
+
+    /// Opens the compose field on this day. Returns true so the drop reads as accepted —
+    /// nothing was written, but something did happen.
+    private func compose() -> Bool {
+        env.beginCompose(.day(day))
+        return true
     }
 
     /// Places the dragged task immediately above the card at `index`, scheduling it onto
@@ -264,7 +274,6 @@ struct DayColumn: View {
 struct UnscheduledColumn: View {
     @Environment(AppEnvironment.self) private var env
     @State private var isTargeted = false
-    @State private var newTitle = ""
 
     var body: some View {
         Group {
@@ -272,14 +281,27 @@ struct UnscheduledColumn: View {
         }
         .dropDestination(for: String.self) { ids, _ in
             guard let raw = ids.first else { return false }
-            let (id, isSpan) = DragPayload.decode(raw)
-            // A span has to end on a day; there is nothing to stretch to here.
-            guard !isSpan, let task = env.store.tasks.first(where: { $0.id == id }) else { return false }
-            // Clears the planned day only. A task with a real deadline keeps it, and keeps
-            // showing up under that deadline.
-            Task { await env.store.schedule(task, to: nil) }
-            return true
+            switch DragPayload.kind(raw) {
+            case .newTask:
+                return compose()
+            case .span:
+                // A span has to end on a day; there is nothing to stretch to here.
+                return false
+            case let .task(id):
+                guard let task = env.store.tasks.first(where: { $0.id == id }) else { return false }
+                // Clears the planned day only. A task with a real deadline keeps it, and
+                // keeps showing up under that deadline.
+                Task { await env.store.schedule(task, to: nil) }
+                return true
+            }
         } isTargeted: { isTargeted = $0 }
+    }
+
+    /// Opens the compose field here. Also unfolds the column, since the + can be dropped
+    /// on it while it is collapsed.
+    private func compose() -> Bool {
+        withAnimation(.easeInOut(duration: 0.18)) { env.beginCompose(.unscheduled) }
+        return true
     }
 
     private var expanded: some View {
@@ -305,7 +327,8 @@ struct UnscheduledColumn: View {
             ForEach(Array(env.unscheduled.enumerated()), id: \.element.id) { index, task in
                 TaskCardView(
                     task: task,
-                    onDropAbove: { droppedID in insert(droppedID, above: index) }
+                    onDropAbove: { droppedID in insert(droppedID, above: index) },
+                    onNewTaskDrop: { compose() }
                 )
                 .draggable(task.id)
             }
@@ -313,9 +336,7 @@ struct UnscheduledColumn: View {
                 EmptyHint(text: "Nothing waiting")
             }
         } footer: {
-            QuickAddField(placeholder: "Add task  ·  !! #list tomorrow", text: $newTitle) { text in
-                env.quickAdd(text, defaultDay: nil)
-            }
+            if env.composeTarget == .unscheduled { ComposeField(target: .unscheduled) }
         }
     }
 
@@ -405,8 +426,9 @@ struct BacklogColumn: View {
             EmptyView()
         }
         .dropDestination(for: String.self) { ids, _ in
-            // Nothing sensible to write: backlog membership is derived from dates in the
-            // past, not a state you can assign. Reject so the card springs back.
+            // Nothing sensible to write, for a card or for the +: backlog membership is
+            // derived from dates already past, not a state you can assign, so there is no
+            // such thing as a new task that belongs here. Reject so the drag springs back.
             _ = ids
             return false
         } isTargeted: { isTargeted = $0 }
@@ -424,38 +446,69 @@ struct EmptyHint: View {
     }
 }
 
-struct QuickAddField: View {
-    let placeholder: String
-    @Binding var text: String
-    let onSubmit: (String) -> Void
+/// The one field a new task is typed into.
+///
+/// Every column used to carry its own, permanently visible — nine text fields on the week
+/// board, each one a click target competing with the cards above it. Now there is a single
+/// field that appears in whichever column the + was clicked from or dropped onto, and
+/// `AppEnvironment.composeTarget` guarantees there is never a second.
+///
+/// It stays open after a submit. Tasks arrive in runs, and Reminders keeps its own new row
+/// alive the same way.
+struct ComposeField: View {
+    let target: ComposeTarget
+    var placeholder = "New task  ·  !! #list tomorrow"
+
+    @Environment(AppEnvironment.self) private var env
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         TextField(placeholder, text: $text)
             .textFieldStyle(.plain)
             .font(.system(size: 12))
+            .focused($isFocused)
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Palette.card.opacity(0.65))
+                    .fill(Palette.card)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(Palette.cardBorder, lineWidth: 1)
+                    .strokeBorder(Palette.accent.opacity(0.75), lineWidth: 1.5)
             )
-            .onSubmit {
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { return }
-                text = ""
-                onSubmit(trimmed)
+            .onAppear { isFocused = true }
+            .onSubmit(submit)
+            // Escape abandons it, as it does in every other Mac text field.
+            .onExitCommand { env.endCompose(target) }
+            .onChange(of: isFocused) { _, focused in
+                // Clicking away from an empty field closes it. A field left behind in a
+                // column with nothing in it reads as a rendering fault, not an invitation.
+                if !focused, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    env.endCompose(target)
+                }
             }
             .help("""
                 Type a task. Optional shorthand:
                   !  !!  !!!      low / medium / high priority
                   #list           file it in a list, e.g. #freelance
                   tomorrow, friday, next week, in 3 days
-                A date word only counts at the start or end, so "Prep Tuesday's                 invoice" keeps its title.
+                A date word only counts at the start or end, so "Prep Tuesday's \
+                invoice" keeps its title.
+                Escape closes the field.
                 """)
+    }
+
+    private func submit() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            env.endCompose(target)
+            return
+        }
+        text = ""
+        env.commitCompose(trimmed, in: target)
+        isFocused = true
     }
 }
 

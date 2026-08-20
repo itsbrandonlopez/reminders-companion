@@ -33,7 +33,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.3.0</string>
+	<string>1.4.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
@@ -48,9 +48,28 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 echo "</plist>" >> "$APP/Contents/Info.plist"
 
-# Ad-hoc: there is no signing identity on this machine. Note that ad-hoc signatures are
-# identified by cdhash, so every rebuild reads as a new app to TCC and re-prompts for
-# Reminders access. See spike/FINDINGS.md.
-codesign --force --sign - --identifier com.brandonlopez.RemindersCompanion "$APP"
+# Signing decides whether the sidecar syncs.
+#
+# iCloud entitlements are only honoured under a real identity backed by a provisioning
+# profile from an enrolled Apple Developer account. Embedding them in an ad-hoc signature
+# does nothing — the system ignores them — so they are only passed when there is an
+# identity to authorise them, and `MetaStore` falls back to a local store when they are
+# absent. Nothing breaks without them; the sidecar simply stays on this Mac.
+#
+#   security find-identity -v -p codesigning     # to see what you have
+#   export CODESIGN_IDENTITY="Apple Development: you@example.com (ABCDE12345)"
+#
+# Note that ad-hoc signatures are identified by cdhash, so every rebuild reads as a new
+# app to TCC and re-prompts for Reminders access. See spike/FINDINGS.md.
+if [ -n "${CODESIGN_IDENTITY:-}" ]; then
+	codesign --force --sign "$CODESIGN_IDENTITY" \
+		--entitlements signing/RemindersCompanion.entitlements \
+		--options runtime \
+		--identifier com.brandonlopez.RemindersCompanion "$APP"
+	echo "signed as: $CODESIGN_IDENTITY  (iCloud sync enabled)"
+else
+	codesign --force --sign - --identifier com.brandonlopez.RemindersCompanion "$APP"
+	echo "ad-hoc signed — the sidecar stays on this Mac. Set CODESIGN_IDENTITY to sync."
+fi
 
 echo "built: $(pwd)/$APP"

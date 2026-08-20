@@ -49,6 +49,21 @@ days in between.
 One kanban column per Reminders list. Your client lists become lanes, so "what's on for
 this client today" is a glance, not a filter.
 
+### Your lists, as lists
+
+Clicking a list in the sidebar opens that list — everything in it, dated or not, in your
+own order, the way Reminders shows it. It used to open the week board narrowed to that
+list, which answered a much smaller question and hid every undated task in it.
+
+Above them sit two tiles: **Today** and **Week**. Those are the two boards, and they are
+the only views that aggregate across lists.
+
+Give a list **sections** and it becomes a board of columns — the same Kanban view Reminders
+shows for a sectioned list, and they follow you to the phone as headings. Drag cards between columns to file them. The sections are typed
+here rather than read, because no app can read Reminders' own (see the limitations below),
+so you name them once to match and they line up. Delete the last one and the list goes back
+to being a list.
+
 ### A backlog that means something
 
 Not "everything overdue" — everything that slipped past the *whole* week. Something due
@@ -61,6 +76,12 @@ rotting is on top.
 Tick your Work calendar and its events draw at the top of each day, with booked hours
 badged on the day header. "Can I take this on Thursday?" stops being a guess.
 
+On the Today board the same events become a **vertical timeline** down the side, drawn to
+scale with a now-line, so a four-hour gig looks like four hours and you can see what is
+left of the day rather than just what is on it. All-day events sit above it as one-line
+mentions — they have no position and no duration, and drawing them as blocks would mean
+inventing both. Fold it away with the chevron if you want the room.
+
 Read-only. The overlay never creates, edits, or deletes an event.
 
 ### Everything the task actually holds
@@ -68,6 +89,16 @@ Read-only. The overlay never creates, edits, or deletes an event.
 Hover any card and open its details: notes, the exact deadline, planned day, priority,
 list and estimate — all editable in place. Alarms and repeat rules are shown but left
 read-only, because those are the parts you need to be able to trust.
+
+### One + that goes where you drop it
+
+A single button floating in the bottom-right corner. Click it and a field opens in the
+column the current view implies — today, on the week; the list you're looking at, in a
+list. **Drag it onto Thursday and the field opens on Thursday.** Drop it on a client
+column and the task is filed there.
+
+Which means "new task, on Thursday, for this client" needs no date typed and no list
+picked. Nine permanent add fields, one per column, became one button.
 
 ### Built to disappear
 
@@ -95,8 +126,8 @@ against the macOS SDK, not assumed:
 
 | | |
 |---|---|
-| **Tags, flags, subtasks, list sections** | Absent from EventKit entirely. Cannot be read or written by anyone. |
-| **Folders** | Not exposed either — Reminders' AppleScript can't even *see* a list that lives inside one. Folders here are recreated in-app, not mirrored. |
+| **Tags, flags, subtasks** | Absent from EventKit entirely. Cannot be read or written by anyone. |
+| **Folders and list sections** | Not exposed either — "section" appears nowhere in EventKit's headers, Reminders' AppleScript declares only account, list and reminder, and its private store is TCC-protected. Both are recreated in-app, not mirrored: you type the names once and they line up by eye. |
 | **Repeating reminders** | Verified safe. Completing one through this app rolls the series forward to the next occurrence with its recurrence rule intact, exactly as Reminders' own UI does. |
 
 The full investigation, including the trap that shaped the whole date model, is in
@@ -141,6 +172,35 @@ swift test
 
 > Built without a code-signing certificate, macOS will re-ask for Reminders access on every
 > rebuild — it identifies ad-hoc signed apps by hash. Normal during development.
+
+### Syncing your arrangement
+
+Manual order, estimates, folders and sections are the things Reminders has nowhere to put,
+so they live in a small local database. That database can sync through iCloud, which is
+what carries your sections to your phone — but iCloud containers need an enrolled Apple
+Developer account, and an ad-hoc signed build cannot carry the entitlement.
+
+Until then everything works, on this Mac, and the sidebar says so. To switch it on:
+
+1. Create a CloudKit container called `iCloud.com.brandonlopez.RemindersCompanion` in
+   [the developer portal](https://developer.apple.com/account/resources/identifiers/list).
+2. Build signed, rather than ad-hoc:
+
+```bash
+export CODESIGN_IDENTITY="Apple Development: you@example.com (ABCDE12345)"
+./make.sh && open build/RemindersCompanion.app
+```
+
+For the phone, set the team and the entitlements before generating the project:
+
+```bash
+export DEVELOPMENT_TEAM=ABCDE12345
+export MOBILE_ENTITLEMENTS=signing/RemindersCompanionMobile.entitlements
+xcodegen generate
+```
+
+Your tasks never depended on any of this — they sync through Reminders, as they always
+have.
 
 ## How it's put together
 

@@ -1,17 +1,30 @@
 import RemindersCore
 import SwiftUI
 
-/// Drag payloads. A card can be dragged two ways, so the payload carries which.
+/// Drag payloads. Three things can be dragged onto a column and they mean three
+/// different things, so the payload carries which.
 enum DragPayload {
-    static let spanPrefix = "span:"
+    private static let spanPrefix = "span:"
+    /// What the floating + carries. Dropping it moves nothing: it opens a compose field
+    /// in whatever column caught it.
+    static let newTask = "new-task"
 
     static func encodeSpan(_ id: String) -> String { spanPrefix + id }
 
-    /// Returns the task id and whether this was a span-handle drag.
-    static func decode(_ value: String) -> (id: String, isSpan: Bool) {
-        value.hasPrefix(spanPrefix)
-            ? (String(value.dropFirst(spanPrefix.count)), true)
-            : (value, false)
+    enum Kind {
+        /// The card body — move the whole task here.
+        case task(String)
+        /// The card's grab handle — stretch the task's far end to here.
+        case span(String)
+        case newTask
+    }
+
+    static func kind(_ value: String) -> Kind {
+        if value == newTask { return .newTask }
+        if value.hasPrefix(spanPrefix) {
+            return .span(String(value.dropFirst(spanPrefix.count)))
+        }
+        return .task(value)
     }
 }
 
@@ -21,12 +34,20 @@ struct TaskCardView: View {
     /// Day columns show a grab handle for dragging the far end of a span across dates.
     /// Undated columns do not — there is no span to stretch.
     var showsSpanHandle = false
+    /// Whether to name the task's list on the card. On a board that mixes lists this is
+    /// how you tell whose work it is; inside one list every card would carry the same
+    /// name and colour, which is noise rather than information.
+    var showsList = true
     /// Called when another card is dropped onto this one, to insert it directly above.
     var onDropAbove: ((String) -> Bool)?
     /// Called when a span handle is dropped onto this card. Cards cover the column's own
     /// drop area, and a rejected inner drop is not forwarded to the ancestor, so without
     /// this a span released over a card would silently do nothing.
     var onSpanDrop: ((String) -> Bool)?
+    /// Called when the floating + is dropped onto this card. Same reason as `onSpanDrop`:
+    /// cards tile most of a column, so a + released over one has to be caught here or the
+    /// drop lands nowhere.
+    var onNewTaskDrop: (() -> Bool)?
 
     @Environment(AppEnvironment.self) private var env
     @State private var isHovering = false
@@ -51,14 +72,16 @@ struct TaskCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 6) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(Color(task.listColor))
-                            .frame(width: 5, height: 5)
-                        Text(task.listName)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Palette.textSecondary)
-                            .lineLimit(1)
+                    if showsList {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color(task.listColor))
+                                .frame(width: 5, height: 5)
+                            Text(task.listName)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(Palette.textSecondary)
+                                .lineLimit(1)
+                        }
                     }
 
                     if task.priority != .none {
@@ -145,10 +168,15 @@ struct TaskCardView: View {
         .contextMenu { menu }
         .dropDestination(for: String.self) { items, _ in
             guard let raw = items.first else { return false }
-            let (id, isSpan) = DragPayload.decode(raw)
-            if isSpan { return onSpanDrop?(id) ?? false }
-            guard let onDropAbove, id != task.id else { return false }
-            return onDropAbove(id)
+            switch DragPayload.kind(raw) {
+            case .newTask:
+                return onNewTaskDrop?() ?? false
+            case let .span(id):
+                return onSpanDrop?(id) ?? false
+            case let .task(id):
+                guard let onDropAbove, id != task.id else { return false }
+                return onDropAbove(id)
+            }
         } isTargeted: { isReorderTarget = $0 && onDropAbove != nil }
     }
 
@@ -178,6 +206,21 @@ struct TaskCardView: View {
     }
 
     @ViewBuilder private var menu: some View {
+        TaskMenu(task: task, showsDetail: $showsDetail)
+    }
+}
+
+/// Everything you can do to a task from a right-click, in one place.
+///
+/// Extracted so the board cards and the list rows offer the same menu rather than two
+/// that drift — the list view is a third surface onto the same task, not a lesser one.
+struct TaskMenu: View {
+    let task: TaskItem
+    @Binding var showsDetail: Bool
+
+    @Environment(AppEnvironment.self) private var env
+
+    var body: some View {
         Button("Show Details…") { showsDetail = true }
         Divider()
         Menu("Priority") {
@@ -194,6 +237,19 @@ struct TaskCardView: View {
         Menu("Move to List") {
             ForEach(env.store.lists.filter(\.isEditable)) { list in
                 Button(list.title) { Task { await env.store.move(task, toList: list.id) } }
+            }
+        }
+        // Only for a list that has sections — offering "Move to Section" against a list
+        // with none would open an empty menu.
+        if !env.sections(in: task.listID).isEmpty {
+            Menu("Move to Section") {
+                Button("None") { env.store.setSection(nil, for: task) }
+                Divider()
+                ForEach(env.sections(in: task.listID)) { section in
+                    Button(section.name) {
+                        env.store.setSection(section.id.uuidString, for: task)
+                    }
+                }
             }
         }
         Divider()

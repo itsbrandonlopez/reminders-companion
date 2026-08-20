@@ -56,20 +56,55 @@ layer, because there is nothing to sync.**
 
 ### The sidecar
 
-Reminders has nowhere to put manual ordering, time estimates, or folders. Those live in a
-local SwiftData store (`MetaStore`), keyed on `calendarItemExternalIdentifier` — the
-identifier EventKit documents as sync-stable, unlike `calendarItemIdentifier`.
+Reminders has nowhere to put manual ordering, time estimates, folders, or list sections.
+Those live in a local SwiftData store (`MetaStore`), keyed on
+`calendarItemExternalIdentifier` — the identifier EventKit documents as sync-stable, unlike
+`calendarItemIdentifier`.
+
+Folders and sections are there for the same reason and were verified the same way: neither
+is exposed by any API. For sections, checked against the macOS 26.5 SDK — the string
+"section" appears in none of EventKit's headers, `EKReminder` adds only start, due,
+completed, completionDate and priority over `EKCalendarItem`, and Reminders' AppleScript
+dictionary declares three classes with no section among them. They exist in the app's
+private store, which is TCC-protected and whose schema is Apple's to change. So they are
+recreated, never mirrored.
 
 The sidecar is deliberately **subordinate**: losing it costs organisation, never tasks.
-That asymmetry is why it never holds anything Reminders could have held. It is also
-local-only, which is why the iPhone and Watch do without folders and manual order rather
-than inventing a second ordering that disagrees with the Mac's.
+That asymmetry is why it never holds anything Reminders could have held, and it is the
+reason every failure here degrades instead of stopping — `ReminderStore`'s reference to it
+is optional, and without one ranks are seeded from priority.
 
-It is **Mac-only**, and `ReminderStore`'s reference to it is optional. The phone shows no
-manual order and no estimates, so carrying one there meant reconciling a SwiftData row per
-reminder on every refresh — and leaving a database on disk — for values nothing on that
-platform reads. Without a sidecar, ranks are seeded from priority, which is what the phone
-sorts by anyway.
+#### It syncs, and that changed what belongs on the phone
+
+The sidecar was Mac-only and local-only for as long as it held nothing worth carrying:
+manual order and estimates, for a phone that displayed neither. Sections changed the
+arithmetic — an arrangement you typed by hand, that existed on exactly one machine.
+
+It is now a **CloudKit-backed SwiftData store**, and the phone opens the same one.
+
+CloudKit imposes two things on the schema, and both are load-bearing:
+
+- **No unique constraints.** `TaskMeta.externalID` was `@Attribute(.unique)`, and that
+  constraint was what made a second row for one task impossible. Across devices it cannot
+  be enforced at all: two Macs offline each create a row, and both arrive. `deduplicate()`
+  replaces it, merging field by field — the more recently seen row is the base, and
+  anything it has no answer for is taken from the loser, so an estimate typed on one device
+  is not lost because the other touched the task more recently. It runs inside
+  `indexedByExternalID()`, which every refresh already calls and which already walks every
+  row.
+- **Every stored property needs a default.** Hence the `= 0`, `= ""` and `= UUID()` on
+  models that previously relied on their initialisers.
+
+Sync is **gated on entitlements**, which an ad-hoc signed build cannot carry. `MetaStore`
+checks for iCloud availability, attempts the CloudKit configuration, and falls back to a
+local store on any failure — reporting which through `MetaStore.Storage`, so the app can
+say "this Mac only" rather than appearing broken. Before the first CloudKit-shaped open it
+copies the store aside once, because that open drops a constraint and hand-typed sections
+now live in there.
+
+One thing it deliberately does not resolve: creating a section named "Doing" on two devices
+before they sync produces two sections, not one. They carry different identifiers, so they
+are genuinely different rows, and merging them by name would be the app guessing at intent.
 
 ---
 
@@ -90,21 +125,30 @@ and go stale across the fetch → mutate → refetch cycle.
 | `TaskItem`, `TaskList`, `Priority` | the domain model |
 | `QuickAddParser` | `!` priority, `#list`, natural-language dates |
 | `Ranking` | fractional indexing for manual order |
-| `MetaStore`, `TaskMeta`, `ListFolder` | the sidecar |
+| `MetaStore`, `TaskMeta`, `ListFolder`, `ListSection` | the sidecar |
 | `WidgetDataProvider` | sidecar-free read path for extensions and the Watch |
 | `UndoableAction`, `OptimisticCompletions` | undo, and the Watch's pending-write state |
 | `Recurrence`, `CalendarEvent`, `BacklogSort`, `WidgetKind` | supporting types |
 
 ### `RemindersCompanion` — macOS, ~3,400 lines
 
-The tool you plan in. Week board with drag-to-schedule, kanban Today view, Reminders-style
-sidebar with user-defined folders, calendar overlay, full task detail panel, ⌘Z undo.
+The tool you plan in. Week board with drag-to-schedule, kanban Today view, per-list detail
+views, Reminders-style sidebar with user-defined folders, calendar overlay, full task
+detail panel, a drag-to-place floating + button, ⌘Z undo.
+
+`SidebarFocus` is the single source of truth for which of the three view kinds is on
+screen — there is no second selector anywhere for the window to disagree with itself
+about.
 
 ### `RemindersCompanionMobile` — iPhone, ~1,900 lines
 
-The companion you update on the road. Three tabs (Today, Week, Triage), a vertical week
-rather than a board, quick-add sheet, floating + button, undo banner. Deliberately thinner:
-no folders, no manual ordering, no estimates.
+The companion you update on the road. Four tabs (Today, Week, Triage, Lists), a vertical
+week rather than a board, quick-add sheet, floating + button, undo banner.
+
+It now opens the synced sidecar, so it honours the manual order dragged out on the Mac and
+shows a list's sections — as headers rather than columns, because a column needs width to
+mean anything and a phone has one column of it. Still thinner by design: no folder
+hierarchy, and sections are read here rather than created.
 
 ### `RemindersCompanionWidgets` — iOS extension, ~430 lines
 

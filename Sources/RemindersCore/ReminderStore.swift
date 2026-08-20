@@ -254,7 +254,10 @@ public final class ReminderStore {
         let row = meta.ensure(
             id, title: reminder.title ?? "", defaultRank: fallbackRank, in: &metaIndex!
         )
-        return Self.makeTaskItem(from: reminder, rank: row.rank, estimateMinutes: row.estimateMinutes)
+        return Self.makeTaskItem(
+            from: reminder, rank: row.rank, estimateMinutes: row.estimateMinutes,
+            sectionID: row.sectionID
+        )
     }
 
     /// Completes a reminder by external identifier against a bare `EKEventStore`, with no
@@ -284,7 +287,8 @@ public final class ReminderStore {
     /// order, estimates) — can build the identical `TaskItem` shape the app itself uses,
     /// from a plain `EKEventStore` fetch, by passing a neutral rank and no estimate.
     public nonisolated static func makeTaskItem(
-        from reminder: EKReminder, rank: Double, estimateMinutes: Int?
+        from reminder: EKReminder, rank: Double, estimateMinutes: Int?,
+        sectionID: String? = nil
     ) -> TaskItem? {
         guard let id = reminder.calendarItemExternalIdentifier,
               let calendar = reminder.calendar else { return nil }
@@ -309,7 +313,8 @@ public final class ReminderStore {
             dueIsTimed: Scheduling.isTimed(due),
             dueDate: due.flatMap { Day.gregorian.date(from: $0) },
             rank: rank,
-            estimateMinutes: estimateMinutes
+            estimateMinutes: estimateMinutes,
+            sectionID: sectionID
         )
     }
 
@@ -835,6 +840,10 @@ public final class ReminderStore {
         }
     }
 
+    /// Creates a reminder and returns its `calendarItemExternalIdentifier`, so a caller
+    /// that needs to attach sidecar state to it — a section, say — can do so without
+    /// having to guess which of the refreshed tasks is the new one by title.
+    @discardableResult
     public func create(
         title: String,
         in listID: String,
@@ -842,8 +851,8 @@ public final class ReminderStore {
         notes: String? = nil,
         due: Day? = nil,
         priority: Priority = .none
-    ) async {
-        guard let calendar = store.calendar(withIdentifier: listID) else { return }
+    ) async -> String? {
+        guard let calendar = store.calendar(withIdentifier: listID) else { return nil }
         let reminder = EKReminder(eventStore: store)
         reminder.title = title
         reminder.calendar = calendar
@@ -861,9 +870,14 @@ public final class ReminderStore {
         do {
             markLocalWrite()
             try store.save(reminder, commit: true)
+            // Read after the save: the external identifier is assigned by the store, and
+            // is nil on a reminder that has never been committed.
+            let id = reminder.calendarItemExternalIdentifier
             await refresh()
+            return id
         } catch {
             lastError = "Could not create “\(title)”: \(error.localizedDescription)"
+            return nil
         }
     }
 
@@ -968,6 +982,31 @@ public final class ReminderStore {
         applyLocalRanks()
     }
 
+    /// Files a task into one of its list's sections, or out of all of them.
+    ///
+    /// Sidecar-only, so this never touches Reminders and never triggers a refetch — which
+    /// is what lets a drag between columns land instantly.
+    public func setSection(_ sectionID: String?, for task: TaskItem) {
+        guard let meta else { return }
+        meta.setSection(sectionID, for: task.id)
+        applyLocalRanks()
+    }
+
+    /// Files many tasks at once — deleting a section empties it in one transaction rather
+    /// than one save per task.
+    public func setSections(_ assignments: [String: String?]) {
+        guard let meta else { return }
+        meta.setSections(assignments)
+        applyLocalRanks()
+    }
+
+    /// Re-reads every sidecar value into the published tasks.
+    ///
+    /// For changes made to the sidecar from outside this type — deleting a section re-files
+    /// everything that was in it, and the board has to see that without a round trip to
+    /// Reminders, which knows nothing about sections in the first place.
+    public func reloadSidecar() { applyLocalRanks() }
+
     /// Re-reads sidecar values into the published tasks without a Reminders round trip,
     /// so a drag-to-reorder feels instant.
     private func applyLocalRanks() {
@@ -980,6 +1019,7 @@ public final class ReminderStore {
             var copy = task
             copy.rank = row.rank
             copy.estimateMinutes = row.estimateMinutes
+            copy.sectionID = row.sectionID
             return copy
         }
         dataRevision &+= 1

@@ -4,14 +4,29 @@ import SwiftUI
 
 /// The phone's object graph.
 ///
-/// Deliberately thinner than the Mac's `AppEnvironment`: no folders, no manual ordering,
-/// no estimates. Those live in a local sidecar that does not sync, and the phone is a
-/// companion rather than the place you organise from. Everything that matters on the road
-/// — tasks, lists, planned days, deadlines — already arrives through iCloud Reminders.
+/// Thinner than the Mac's `AppEnvironment`, but no longer sidecar-free. It used to be:
+/// manual order, estimates, folders and sections lived in a **local** database on one Mac,
+/// so carrying one here meant reconciling a SwiftData row per reminder on every refresh to
+/// store values nothing on this platform could ever read.
+///
+/// Putting that database on CloudKit is what changed the arithmetic. The rows now arrive
+/// with content — the order you dragged things into on the Mac, the sections you named —
+/// so reconciling them buys something. Everything else still comes through Reminders
+/// itself, which needs no sync layer because it was never a copy.
 @MainActor
 @Observable
 final class MobileEnvironment {
     let store: ReminderStore
+
+    /// The sidecar, when one could be opened. Nil is survivable and always has been: the
+    /// store seeds ranks from priority without it, which is what this app sorted by
+    /// before there was one.
+    let meta: MetaStore?
+
+    /// Whether the sidecar is reaching iCloud, for the settings row that says so. An
+    /// unsigned or unentitled build gets `.local`, where sections typed on the Mac will
+    /// never appear here and the app should say that rather than look broken.
+    var sidecarStorage: MetaStore.Storage { meta?.storage ?? .local }
 
     var selectedListIDs: Set<String> = [] {
         didSet { defaults.set(Array(selectedListIDs), forKey: Self.listsKey) }
@@ -48,12 +63,12 @@ final class MobileEnvironment {
     private static let setupKey = "mobile.hasCompletedSetup"
 
     init() {
-        // No sidecar at all on the phone. It holds manual ordering, estimates and folders —
-        // none of which this app shows — so carrying one meant reconciling a SwiftData row
-        // per reminder on every refresh, and leaving a database on disk, to store values
-        // nothing here ever reads. `ReminderStore` seeds ranks from priority when there is
-        // no sidecar, which is exactly what this app sorts by anyway.
-        store = ReminderStore(meta: nil)
+        // Failing to open the sidecar is never fatal here. It carries arrangement — order,
+        // estimates, sections — and losing it costs exactly that, while every task, list
+        // and date still arrives through Reminders untouched.
+        let meta = try? MetaStore()
+        self.meta = meta
+        store = ReminderStore(meta: meta)
         selectedListIDs = Set(defaults.stringArray(forKey: Self.listsKey) ?? [])
         overlayCalendarIDs = Set(defaults.stringArray(forKey: Self.overlayKey) ?? [])
         hasCompletedSetup = defaults.bool(forKey: Self.setupKey)
@@ -90,6 +105,9 @@ final class MobileEnvironment {
         let selectedListIDs: Set<String>
         let listCount: Int
         let today: Day
+        /// Constant for the life of the process, but carried here so the two sort orders
+        /// can never be served from a cache built under the other one.
+        let honoursManualOrder: Bool
     }
 
     private struct Slices {
@@ -108,7 +126,8 @@ final class MobileEnvironment {
             dataRevision: store.dataRevision,
             selectedListIDs: selectedListIDs,
             listCount: store.lists.count,
-            today: .today()
+            today: .today(),
+            honoursManualOrder: meta != nil
         )
         if key == cacheKey { return cache }
         let built = buildSlices(key)
@@ -122,15 +141,23 @@ final class MobileEnvironment {
         let active = activeListIDs
         let weekStart = Scheduling.week(containing: key.today).first ?? key.today
 
-        // Ordered by priority then day. The phone has no manual ordering to honour.
-        out.tasks = store.tasks
-            .filter { active.contains($0.listID) && !$0.isCompleted }
-            .sorted { lhs, rhs in
+        let visible = store.tasks.filter { active.contains($0.listID) && !$0.isCompleted }
+
+        if key.honoursManualOrder {
+            // The order you dragged things into on the Mac, arriving through iCloud. Rank
+            // alone: it is seeded from priority for anything never touched, so an
+            // unorganised list still reads high-priority-first.
+            out.tasks = visible.sorted { $0.rank < $1.rank }
+        } else {
+            // No sidecar. Priority then day, which is what this app did before there was
+            // any ordering to honour.
+            out.tasks = visible.sorted { lhs, rhs in
                 if lhs.priority.sortWeight != rhs.priority.sortWeight {
                     return lhs.priority.sortWeight < rhs.priority.sortWeight
                 }
                 return (lhs.boardDay ?? key.today) < (rhs.boardDay ?? key.today)
             }
+        }
 
         for task in out.tasks {
             switch Scheduling.bucket(
@@ -149,7 +176,8 @@ final class MobileEnvironment {
         return out
     }
 
-    /// Ordered by priority then day. The phone has no manual ordering to honour.
+    /// The Mac's manual order when a sidecar is reaching this device, priority then day
+    /// when it is not.
     var tasks: [TaskItem] { slices.tasks }
 
     /// Work that slipped past the whole of the current week. Same rule as the Mac.
@@ -169,6 +197,23 @@ final class MobileEnvironment {
     /// passed" and is a different, larger set (`TaskItem.isOverdue`). The banner on Today
     /// links straight to this pile, so it has to count exactly what the pile holds.
     var backlogCount: Int { backlog.count }
+
+    // MARK: - Sections
+
+    /// One list's sections, in the order they are arranged on the Mac. Empty when the list
+    /// has none, or when there is no sidecar reaching this device.
+    func sections(in listID: String) -> [ListSection] {
+        meta?.sections(in: listID) ?? []
+    }
+
+    /// Every task in one list, ignoring the list filter — a list you opened deliberately
+    /// is not a list you meant to hide.
+    func tasks(in listID: String) -> [TaskItem] {
+        let ordered = store.tasks.filter { $0.listID == listID && !$0.isCompleted }
+        return meta != nil
+            ? ordered.sorted { $0.rank < $1.rank }
+            : ordered.sorted { $0.priority.sortWeight < $1.priority.sortWeight }
+    }
 
     // MARK: - Quick add
 

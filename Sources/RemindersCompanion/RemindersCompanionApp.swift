@@ -31,6 +31,12 @@ struct RemindersCompanionApp: App {
                 .keyboardShortcut("z", modifiers: .command)
                 .disabled(env.store.undoable == nil)
             }
+            CommandGroup(replacing: .newItem) {
+                // Opens the same field the floating + does, in the column the current
+                // view implies.
+                Button("New Task") { env.beginCompose(env.defaultComposeTarget) }
+                    .keyboardShortcut("n", modifiers: .command)
+            }
             CommandGroup(after: .sidebar) {
                 Button("Previous Week") { env.jumpWeek(-1) }
                     .keyboardShortcut("[", modifiers: .command)

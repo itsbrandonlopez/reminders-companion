@@ -32,7 +32,10 @@ struct TodayBoardView: View {
     }
 
     private var columns: [TaskList] {
-        let populated = Set(todaysTasks.map(\.listID))
+        var populated = Set(todaysTasks.map(\.listID))
+        // A column opened for typing has to be on screen even when nothing is due in it
+        // today, or the + would drop into a list that vanishes under the cursor.
+        if case let .todayList(id) = env.composeTarget { populated.insert(id) }
         return env.visibleLists.filter { populated.contains($0.id) || $0.isDefault }
     }
 
@@ -40,55 +43,55 @@ struct TodayBoardView: View {
         VStack(spacing: 0) {
             header
             Divider().overlay(Palette.separator)
-            eventBar
-            if columns.isEmpty && overdue.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle")
-                        .font(.system(size: 34, weight: .light))
-                        .foregroundStyle(Palette.textTertiary)
-                    Text("Nothing due today")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Palette.textPrimary)
-                    Text("Drag work in from the Week view when you're ready for it.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Palette.textSecondary)
+            // The timeline sits outside the horizontal scroll view, so scrolling to the
+            // fifth client column never scrolls the day's shape off the screen.
+            HStack(spacing: 0) {
+                work
+                if showsTimeline {
+                    Divider().overlay(Palette.separator)
+                    DayTimelineView(day: today, events: env.events(on: today))
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Palette.window)
-            } else {
-                ScrollView(.horizontal) {
-                    HStack(alignment: .top, spacing: Metrics.gutter) {
-                        ForEach(columns) { list in
-                            ListColumn(list: list, tasks: todaysTasks.filter { $0.listID == list.id })
-                        }
-                        if !overdue.isEmpty {
-                            TodayOverdueColumn(tasks: overdue)
-                        }
-                    }
-                    .padding(Metrics.gutter)
-                }
-                .background(Palette.window)
             }
         }
     }
 
-    /// Today's commitments, across the top rather than inside a list column — they do not
-    /// belong to any client list, and they bound everything below them.
-    @ViewBuilder private var eventBar: some View {
-        let events = env.events(on: today)
-        if !events.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 7) {
-                    ForEach(events) { event in
-                        EventChip(event: event, day: today)
-                            .frame(width: 190, alignment: .leading)
+    /// Whether the day's calendar is worth a rail at all.
+    ///
+    /// Tied to having picked calendars rather than to having events: an empty grid with a
+    /// now-line says "the rest of today is yours", which is worth knowing, but someone who
+    /// never switched the overlay on should not be given a column about it.
+    private var showsTimeline: Bool {
+        env.store.eventAccess == .granted && !env.overlayCalendarIDs.isEmpty
+    }
+
+    @ViewBuilder private var work: some View {
+        if columns.isEmpty && overdue.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 34, weight: .light))
+                    .foregroundStyle(Palette.textTertiary)
+                Text("Nothing due today")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Palette.textPrimary)
+                Text("Drag work in from the Week view when you're ready for it.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.textSecondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Palette.window)
+        } else {
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: Metrics.gutter) {
+                    ForEach(columns) { list in
+                        ListColumn(list: list, tasks: todaysTasks.filter { $0.listID == list.id })
+                    }
+                    if !overdue.isEmpty {
+                        TodayOverdueColumn(tasks: overdue)
                     }
                 }
-                .padding(.horizontal, Metrics.gutter)
-                .padding(.vertical, 8)
+                .padding(Metrics.gutter)
             }
             .background(Palette.window)
-            Divider().overlay(Palette.separator)
         }
     }
 
@@ -128,7 +131,6 @@ struct ListColumn: View {
 
     @Environment(AppEnvironment.self) private var env
     @State private var isTargeted = false
-    @State private var newTitle = ""
 
     var body: some View {
         BoardColumn(tint: Color(list.color).opacity(0.08), isTargeted: isTargeted) {
@@ -144,34 +146,38 @@ struct ListColumn: View {
             .foregroundStyle(Palette.textSecondary)
         } content: {
             ForEach(tasks) { task in
-                TaskCardView(task: task).draggable(task.id)
+                TaskCardView(task: task, onNewTaskDrop: { compose() })
+                    .draggable(task.id)
             }
             if tasks.isEmpty { EmptyHint(text: "Clear") }
         } footer: {
-            if list.isEditable {
-                QuickAddField(placeholder: "Add task", text: $newTitle) { text in
-                    // This column *is* a list, so it wins over any #token in the text.
-                    let parsed = QuickAddParser.parse(text)
-                    let title = parsed.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !title.isEmpty else { return }
-                    Task {
-                        await env.store.create(
-                            title: title,
-                            in: list.id,
-                            on: parsed.day ?? .today(),
-                            priority: parsed.priority ?? .none
-                        )
-                    }
-                }
+            if env.composeTarget == .todayList(list.id) {
+                ComposeField(target: .todayList(list.id), placeholder: "New task in \(list.title)")
             }
         }
         .dropDestination(for: String.self) { ids, _ in
-            guard let id = ids.first,
-                  let task = env.store.tasks.first(where: { $0.id == id }),
-                  task.listID != list.id else { return false }
-            Task { await env.store.move(task, toList: list.id) }
-            return true
+            guard let raw = ids.first else { return false }
+            switch DragPayload.kind(raw) {
+            case .newTask:
+                return compose()
+            case .span:
+                // A span is a range of days. This column is a list, not a day.
+                return false
+            case let .task(id):
+                guard let task = env.store.tasks.first(where: { $0.id == id }),
+                      task.listID != list.id else { return false }
+                Task { await env.store.move(task, toList: list.id) }
+                return true
+            }
         } isTargeted: { isTargeted = $0 }
+    }
+
+    /// Opens the compose field in this list. Read-only lists — Siri's suggestions, a
+    /// subscribed calendar — cannot take a new task, so the drop is refused instead.
+    private func compose() -> Bool {
+        guard list.isEditable else { return false }
+        env.beginCompose(.todayList(list.id))
+        return true
     }
 }
 
@@ -226,8 +232,9 @@ struct TodayOverdueColumn: View {
             )
         }
         .dropDestination(for: String.self) { _, _ in
-            // Backlog membership is derived from dates in the past, not a state you can
-            // assign, so a drop here has nothing to write.
+            // Overdue membership is derived from dates already past, not a state you can
+            // assign — and there is no such thing as a new task that is already late — so
+            // neither a card nor the + has anything to write here.
             false
         } isTargeted: { isTargeted = $0 }
     }

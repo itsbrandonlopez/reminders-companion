@@ -12,12 +12,15 @@ import SwiftData
 /// organisation, never data: every list and task still lives in Reminders untouched.
 @Model
 public final class ListFolder {
-    @Attribute(.unique) public var id: UUID
-    public var name: String
-    public var sortIndex: Int
+    // Defaults on every property and no unique constraint: both are CloudKit
+    // requirements. The identifier is generated locally, so two devices cannot collide
+    // on one the way they can on a task's external identifier.
+    public var id: UUID = UUID()
+    public var name: String = ""
+    public var sortIndex: Int = 0
     /// `EKCalendar.calendarIdentifier` values, in display order.
-    public var listIDs: [String]
-    public var isCollapsed: Bool
+    public var listIDs: [String] = []
+    public var isCollapsed: Bool = false
 
     public init(
         id: UUID = UUID(),

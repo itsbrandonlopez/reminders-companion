@@ -35,6 +35,8 @@ public enum DateLabels {
     public static let shortWeekday = template("EEE")
     /// Full weekday — "Monday".
     public static let fullWeekday = template("EEEE")
+    /// The hour alone, for a timeline's gridlines — "9 AM" or "09".
+    public static let hour = template("j")
     /// Day, month and time, for an alarm — "20 Aug, 9:30 AM".
     public static let monthDayTime = template("dMMMjmm")
 

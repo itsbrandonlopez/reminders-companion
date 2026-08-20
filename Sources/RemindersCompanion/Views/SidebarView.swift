@@ -1,22 +1,28 @@
 import RemindersCore
 import SwiftUI
 
-/// What the sidebar is pointing at. Mirrors how Reminders works: the smart tiles are
-/// aggregate views, and a list row drills into that one list.
+/// What the sidebar is pointing at, and the only thing that decides which view the
+/// window shows.
+///
+/// Three cases, because there are three kinds of view: the week board, the today board,
+/// and one list on its own. The tiles used to carry five — Scheduled, All and Backlog all
+/// opened the same week board with a flag flipped, which made them three names for one
+/// thing rather than three views.
 enum SidebarFocus: Hashable {
+    case week
     case today
-    case scheduled
-    case all
-    case backlog
     case list(String)
 }
 
-/// A close copy of the Reminders sidebar — smart tiles in a two-up grid above a
-/// "My Lists" section of colour-dotted rows, organised into collapsible folders.
+/// A close copy of the Reminders sidebar — smart tiles above a "My Lists" section of
+/// colour-dotted rows, organised into collapsible folders.
 ///
-/// Reminders' own Flagged and Completed tiles are deliberately absent: flags are not
-/// exposed by EventKit at all, and completed items need a separate fetch this app does
-/// not do. Backlog takes their place, which is the tile that actually earns its spot here.
+/// Two tiles rather than Reminders' four, and they are this app's two boards rather than
+/// saved searches. Reminders' Flagged and Completed have nothing to point at here — flags
+/// are absent from EventKit entirely, and completed items need a fetch this app does not
+/// do. Backlog is not a tile either: it is already a column on the Week board, so a tile
+/// for it would have opened the very view it lives in. It survives as the count badged on
+/// the Week tile, which is the part that was actually worth glancing at.
 struct SidebarView: View {
     @Environment(AppEnvironment.self) private var env
     let onSelect: (SidebarFocus) -> Void
@@ -36,28 +42,24 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: 16) {
                 LazyVGrid(columns: columns, spacing: 9) {
                     SmartTile(
-                        title: "Today", symbol: "calendar", tint: Palette.accent,
+                        title: "Today", symbol: "sun.max.fill", tint: Palette.accent,
                         count: env.todayCount, isSelected: env.focus == .today
                     ) { onSelect(.today) }
 
                     SmartTile(
-                        title: "Scheduled", symbol: "calendar.badge.clock", tint: Palette.overdue,
-                        count: env.scheduledCount, isSelected: env.focus == .scheduled
-                    ) { onSelect(.scheduled) }
-
-                    SmartTile(
-                        title: "All", symbol: "tray.fill", tint: Palette.textSecondary,
-                        count: env.allCount, isSelected: env.focus == .all
-                    ) { onSelect(.all) }
-
-                    SmartTile(
-                        title: "Backlog", symbol: "clock.arrow.circlepath", tint: Palette.flag,
-                        count: env.backlog.count, isSelected: env.focus == .backlog
-                    ) { onSelect(.backlog) }
+                        title: "Week", symbol: "calendar", tint: Palette.flag,
+                        count: env.scheduledCount, isSelected: env.focus == .week,
+                        // The one number the retired Backlog tile was carrying. It rides
+                        // here because the backlog is a column on the board this opens.
+                        badge: env.backlog.count,
+                        badgeTint: Palette.overdue,
+                        badgeHelp: "\(env.backlog.count) in backlog"
+                    ) { onSelect(.week) }
                 }
 
                 listsSection
                 CalendarOverlaySection()
+                SidecarStatusRow()
             }
             .padding(12)
         }
@@ -166,6 +168,10 @@ private struct FolderSection: View {
                         .fill(isTargeted ? Palette.accent.opacity(0.18)
                               : (isHovering ? Palette.card.opacity(0.7) : .clear))
                 )
+                // A shape filled with `.clear` is not hit-testable, so an unselected row's
+                // background was dead to the mouse and only its text and icon could be
+                // clicked. This makes the whole row the target, which is what it looks like.
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onHover { isHovering = $0 }
@@ -204,6 +210,10 @@ private struct SmartTile: View {
     let tint: Color
     let count: Int
     let isSelected: Bool
+    /// A secondary count that wants attention, shown beside the title. Hidden at zero.
+    var badge: Int = 0
+    var badgeTint: Color = Palette.overdue
+    var badgeHelp: String = ""
     let action: () -> Void
 
     @State private var isHovering = false
@@ -224,10 +234,29 @@ private struct SmartTile: View {
                         .foregroundStyle(Palette.textPrimary)
                         .monospacedDigit()
                 }
-                Text(title)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(Palette.textSecondary)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if badge > 0 {
+                        HStack(spacing: 2.5) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 8.5, weight: .semibold))
+                            Text("\(badge)")
+                                .font(.system(size: 10, weight: .semibold))
+                                .monospacedDigit()
+                        }
+                        .foregroundStyle(badgeTint)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1.5)
+                        .background(
+                            Capsule().fill(badgeTint.opacity(0.16))
+                        )
+                        .help(badgeHelp)
+                    }
+                }
             }
             .padding(9)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -291,6 +320,9 @@ private struct ListRow: View {
                     .fill(isSelected ? Palette.accent.opacity(0.16)
                           : (isHovering ? Palette.card.opacity(0.7) : .clear))
             )
+            // Same reason as the folder header: without this the clickable area is the
+            // text and the dot, not the row.
+            .contentShape(Rectangle())
             .opacity(isIncluded ? 1 : 0.45)
         }
         .buttonStyle(.plain)
@@ -346,6 +378,54 @@ struct ListFilterMenu: View {
                 }
             }
         )
+    }
+}
+
+/// Says whether the sidecar — manual order, estimates, folders, sections — is reaching
+/// your other devices.
+///
+/// Worth a permanent line rather than a one-off alert: everything it covers is invisible
+/// to Reminders, so "I named these sections on the Mac and my phone doesn't have them" is
+/// a question this answers before it gets asked.
+private struct SidecarStatusRow: View {
+    @Environment(AppEnvironment.self) private var env
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol).font(.system(size: 10))
+            Text(label).font(.system(size: 11))
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(Palette.textTertiary)
+        .padding(.horizontal, 7)
+        .help(explanation)
+    }
+
+    private var symbol: String {
+        switch env.sidecarStorage {
+        case .cloud: "icloud.fill"
+        case .local: "internaldrive"
+        case .memory: "exclamationmark.triangle"
+        }
+    }
+
+    private var label: String {
+        switch env.sidecarStorage {
+        case .cloud: "Order and sections sync"
+        case .local: "Order and sections: this Mac"
+        case .memory: "Not being saved"
+        }
+    }
+
+    private var explanation: String {
+        switch env.sidecarStorage {
+        case .cloud:
+            "Manual order, estimates, folders and sections are syncing through iCloud. Your tasks themselves have always synced through Reminders."
+        case .local:
+            "Manual order, estimates, folders and sections are stored on this Mac only. Syncing them needs a build signed with an Apple Developer identity — see make.sh. Your tasks are unaffected: they sync through Reminders as always."
+        case .memory:
+            "The sidecar could not be opened, so ordering, estimates, folders and sections will be lost when the app quits. Your tasks are safe in Reminders."
+        }
     }
 }
 
@@ -466,6 +546,7 @@ private struct CalendarToggleRow: View {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(isHovering ? Palette.card.opacity(0.7) : .clear)
         )
+        .contentShape(Rectangle())
         .onHover { isHovering = $0 }
     }
 }
