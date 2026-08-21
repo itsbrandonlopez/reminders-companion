@@ -4,6 +4,17 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-08-20
+
+### Fixed
+
+- **Fixed a crash on launch for builds without the CloudKit entitlement.** The sidecar
+  decided whether to sync through iCloud by checking whether the device had any iCloud
+  account signed in, not whether the build itself carried the CloudKit container
+  entitlement — so a build without it still tried to open a CloudKit-backed store, which
+  CloudKit doesn't fail gracefully on but crashes outright. Now checked directly before
+  ever attempting the cloud open.
+
 ## [1.4.0] — 2026-08-20
 
 Mac app navigation reshaped around what each view is actually for — and the sidecar,
@@ -522,6 +533,7 @@ source of truth.
 - macOS only. The domain logic is UI-free and platform-agnostic, so an iPhone app and
   widget can be added without rework.
 
+[1.4.1]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.4.1
 [1.4.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.4.0
 [1.3.0]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.3.0
 [1.2.1]: https://github.com/itsbrandonlopez/reminders-companion/releases/tag/v1.2.1
