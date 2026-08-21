@@ -6,8 +6,19 @@ import SwiftUI
 struct RemindersCompanionApp: App {
     @State private var env = AppEnvironment()
 
+    /// "Reminders Companion 1.4.1" — falls back to the bare name if the bundle carries no
+    /// version, which is the case for `swift run` outside the app bundle make.sh builds.
+    private static var windowTitle: String {
+        guard let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+              !version.isEmpty
+        else {
+            return "Reminders Companion"
+        }
+        return "Reminders Companion \(version)"
+    }
+
     var body: some Scene {
-        WindowGroup("Reminders Companion") {
+        WindowGroup(Text(Self.windowTitle)) {
             ContentView()
                 .environment(env)
                 .frame(minWidth: 900, minHeight: 560)
