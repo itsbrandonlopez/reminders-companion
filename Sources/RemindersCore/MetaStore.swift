@@ -32,6 +32,15 @@ public final class MetaStore {
     /// both `.entitlements` files. Changing it strands whatever is already synced.
     public static let cloudContainerID = "iCloud.com.brandonlopez.RemindersCompanion"
 
+    /// Whether this running process was actually signed with the CloudKit container
+    /// entitlement, as opposed to whether the device merely has an iCloud account. Asking
+    /// for the container's ubiquity URL is the documented, public way to find out: it
+    /// resolves to nil when the process holds no entitlement for that identifier, rather
+    /// than crashing the way an unentitled CloudKit database open does.
+    private static var hasCloudKitEntitlement: Bool {
+        FileManager.default.url(forUbiquityContainerIdentifier: cloudContainerID) != nil
+    }
+
     public init(inMemory: Bool = false) throws {
         let schema = Schema([TaskMeta.self, ListFolder.self, ListSection.self])
 
@@ -46,11 +55,13 @@ public final class MetaStore {
 
         Self.backUpStoreBeforeFirstCloudOpen()
 
-        // Two gates, because neither alone is enough. The token is nil when the build
-        // carries no iCloud entitlement, so an ad-hoc signed app never even attempts it;
-        // and the open is still tried inside a `do` because a token can exist while the
-        // container itself is unreachable.
-        if FileManager.default.ubiquityIdentityToken != nil {
+        // Three gates, because none alone is enough. The ubiquity token only reflects
+        // whether *some* iCloud account is signed into the device — it stays non-nil even
+        // when this particular build carries no CloudKit entitlement at all. Asking
+        // CloudKit to open a container the process isn't entitled to doesn't throw; it
+        // crashes the process outright, on a background queue no `do` here can reach. So
+        // the entitlement has to be checked directly before ever attempting the open.
+        if FileManager.default.ubiquityIdentityToken != nil && Self.hasCloudKitEntitlement {
             do {
                 container = try ModelContainer(
                     for: schema,
