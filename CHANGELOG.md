@@ -4,7 +4,7 @@ All notable changes to Reminders Companion are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.0] — 2026-08-19
+## [1.4.0] — 2026-08-20
 
 Mac app navigation reshaped around what each view is actually for — and the sidecar,
 which had quietly become the place your arrangement lives, learned to sync.
